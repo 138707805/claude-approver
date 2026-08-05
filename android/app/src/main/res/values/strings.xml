@@ -1,0 +1,21 @@
+<resources>
+    <string name="app_name">Claude Approver</string>
+    <string name="pairing_code_label">페어링 코드</string>
+    <string name="pairing_code_hint">PC에서 setup 스크립트를 실행하면 나오는 코드를 입력하세요</string>
+    <string name="connect_button">연결하고 감시 시작</string>
+    <string name="disconnect_button">감시 중지</string>
+    <string name="status_disconnected">연결 안 됨</string>
+    <string name="status_connected">연결됨 · 실시간 감시 중</string>
+    <string name="status_connecting">연결 중…</string>
+    <string name="history_title">최근 요청</string>
+    <string name="empty_history">아직 받은 요청이 없습니다</string>
+    <string name="allow">허용</string>
+    <string name="deny">거부</string>
+    <string name="channel_name">권한 승인 알림</string>
+    <string name="channel_description">Claude Code가 승인을 요청할 때 오는 알림</string>
+    <string name="fg_channel_name">백그라운드 감시</string>
+    <string name="fg_service_title">Claude Approver 실행 중</string>
+    <string name="fg_service_text">권한 요청을 기다리는 중…</string>
+    <string name="copy_code">복사</string>
+    <string name="code_copied">코드가 복사되었습니다</string>
+</resources>
