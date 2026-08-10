@@ -11,8 +11,19 @@ android {
         applicationId = "com.claudeapprover"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1"
+    }
+
+    // 고정된 debug keystore를 사용해서, 매 빌드마다(CI 포함) 같은 서명이 나오도록 한다.
+    // 이래야 새 APK를 기존 앱 위에 그냥 덮어 설치할 수 있다 (매번 삭제 후 재설치할 필요 없음).
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("../debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
     }
 
     buildTypes {

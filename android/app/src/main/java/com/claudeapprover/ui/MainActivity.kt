@@ -146,13 +146,33 @@ class MainActivity : AppCompatActivity() {
         binding.emptyHistoryText.visibility = if (items.isEmpty()) android.view.View.VISIBLE else android.view.View.GONE
 
         val inflater = LayoutInflater.from(this)
+        val replyTopic = prefs.replyTopic
         items.forEach { item ->
             val itemBinding = ItemHistoryBinding.inflate(inflater, binding.historyContainer, false)
             itemBinding.itemTitle.text = item.title
             itemBinding.itemBody.text = item.body
             itemBinding.itemStatus.text = statusLabel(item.status)
             itemBinding.itemStatus.setTextColor(statusColor(item.status))
+
+            if (item.status == RequestStatus.PENDING) {
+                itemBinding.itemActionRow.visibility = android.view.View.VISIBLE
+                itemBinding.itemAllowButton.setOnClickListener {
+                    respondTo(item.id, replyTopic, "allow")
+                }
+                itemBinding.itemDenyButton.setOnClickListener {
+                    respondTo(item.id, replyTopic, "deny")
+                }
+            } else {
+                itemBinding.itemActionRow.visibility = android.view.View.GONE
+            }
+
             binding.historyContainer.addView(itemBinding.root)
+        }
+    }
+
+    private fun respondTo(requestId: String, replyTopic: String, decision: String) {
+        com.claudeapprover.service.ResponseHelper.respond(this, requestId, replyTopic, decision) {
+            runOnUiThread { renderHistory() }
         }
     }
 

@@ -37,5 +37,33 @@
             android:textSize="12sp"
             android:textStyle="bold"
             android:layout_marginTop="6dp" />
+
+        <LinearLayout
+            android:id="@+id/itemActionRow"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginTop="8dp"
+            android:visibility="gone">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/itemAllowButton"
+                style="@style/Widget.MaterialComponents.Button"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginEnd="6dp"
+                android:text="@string/allow"
+                android:backgroundTint="@color/brand_accent" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/itemDenyButton"
+                style="@style/Widget.MaterialComponents.Button"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/deny"
+                android:backgroundTint="@color/brand_deny" />
+        </LinearLayout>
     </LinearLayout>
 </androidx.cardview.widget.CardView>

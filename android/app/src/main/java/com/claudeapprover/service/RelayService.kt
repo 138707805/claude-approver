@@ -201,7 +201,6 @@ class RelayService : Service() {
             putExtra(ReplyActionReceiver.EXTRA_REQUEST_ID, requestId)
             putExtra(ReplyActionReceiver.EXTRA_DECISION, decision)
             putExtra(ReplyActionReceiver.EXTRA_REPLY_TOPIC, replyTopic)
-            putExtra(ReplyActionReceiver.EXTRA_NOTIF_ID, requestId.hashCode())
         }
         return PendingIntent.getBroadcast(
             this, requestCode, intent,

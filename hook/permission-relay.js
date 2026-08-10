@@ -9,8 +9,47 @@ const os = require("os");
 const path = require("path");
 
 const CONFIG_PATH = path.join(os.homedir(), ".claude", "claude-approver.json");
+const ALLOWLIST_PATH = path.join(os.homedir(), ".claude", "claude-approver-allowlist.json");
 const NTFY_HOST = "ntfy.sh";
 const DEFAULT_TIMEOUT_SEC = 170; // settings.json 쪽 hook timeout(180s)보다 약간 짧게
+
+// 한 번 "허용"한 요청은 다음에 똑같은 요청이 오면 다시 물어보지 않고 바로 허용한다.
+// Bash는 명령어 전체 텍스트, Write/Edit는 대상 파일 경로가 같으면 "같은 요청"으로 본다.
+function signatureFor(toolName, toolInput) {
+  const input = toolInput || {};
+  switch (toolName) {
+    case "Bash":
+      return `Bash::${input.command || ""}`;
+    case "Write":
+      return `Write::${input.file_path || ""}`;
+    case "Edit":
+      return `Edit::${input.file_path || ""}`;
+    default:
+      return `${toolName}::${JSON.stringify(input)}`;
+  }
+}
+
+function loadAllowlist() {
+  try {
+    const raw = fs.readFileSync(ALLOWLIST_PATH, "utf8");
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr : [];
+  } catch {
+    return [];
+  }
+}
+
+function rememberAllowed(signature) {
+  try {
+    const list = loadAllowlist();
+    if (!list.includes(signature)) {
+      list.push(signature);
+      fs.writeFileSync(ALLOWLIST_PATH, JSON.stringify(list, null, 2));
+    }
+  } catch {
+    // 저장 실패해도 이번 승인 자체는 이미 끝났으니 무시
+  }
+}
 
 function readStdin() {
   return new Promise((resolve) => {
@@ -149,6 +188,20 @@ async function main() {
   const toolName = payload.tool_name;
   const toolUseId = payload.tool_use_id || `${Date.now()}`;
   const { title, body } = summarize(toolName, payload.tool_input);
+  const signature = signatureFor(toolName, payload.tool_input);
+
+  if (loadAllowlist().includes(signature)) {
+    console.log(
+      JSON.stringify({
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: "allow",
+          permissionDecisionReason: "이전에 휴대폰에서 '항상 허용'으로 저장된 요청이라 자동 승인함",
+        },
+      })
+    );
+    return;
+  }
 
   const sent = await postJson(config.askTopic, {
     id: toolUseId,
@@ -163,12 +216,13 @@ async function main() {
   const decision = await waitForReply(config.replyTopic, toolUseId, timeoutMs);
 
   if (decision === "allow") {
+    rememberAllowed(signature);
     console.log(
       JSON.stringify({
         hookSpecificOutput: {
           hookEventName: "PreToolUse",
           permissionDecision: "allow",
-          permissionDecisionReason: "휴대폰(Claude Approver 앱)에서 승인함",
+          permissionDecisionReason: "휴대폰(Claude Approver 앱)에서 승인함 (다음부터 동일 요청은 자동 승인)",
         },
       })
     );
