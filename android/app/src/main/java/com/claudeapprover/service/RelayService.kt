@@ -6,6 +6,8 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
+import android.os.Handler
+import android.os.Looper
 import androidx.core.app.NotificationCompat
 import com.claudeapprover.R
 import com.claudeapprover.data.Prefs
@@ -26,12 +28,23 @@ class RelayService : Service() {
         const val FG_NOTIF_ID = 1
         const val ACTION_HISTORY_UPDATED = "com.claudeapprover.HISTORY_UPDATED"
         const val ACTION_STOP = "com.claudeapprover.STOP_SERVICE"
+        const val ACTION_STAGE_DECISION = "com.claudeapprover.STAGE_DECISION"
+        const val ACTION_UNDO_DECISION = "com.claudeapprover.UNDO_DECISION"
+        const val EXTRA_REQUEST_ID = "request_id"
+        const val EXTRA_DECISION = "decision"
+        const val EXTRA_REPLY_TOPIC = "reply_topic"
+
+        /** 허용/거부를 누른 뒤 실제로 전송되기 전까지 취소할 수 있는 시간. */
+        const val UNDO_WINDOW_MS = 5000L
     }
 
     private lateinit var prefs: Prefs
     @Volatile private var running = false
     private var currentCall: Call? = null
     private var streamThread: Thread? = null
+
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val pendingCommits = mutableMapOf<String, Runnable>()
 
     override fun onCreate() {
         super.onCreate()
@@ -40,9 +53,19 @@ class RelayService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_STOP) {
-            stopSelfClean()
-            return START_NOT_STICKY
+        when (intent?.action) {
+            ACTION_STOP -> {
+                stopSelfClean()
+                return START_NOT_STICKY
+            }
+            ACTION_STAGE_DECISION -> {
+                stageDecision(intent)
+                return START_NOT_STICKY
+            }
+            ACTION_UNDO_DECISION -> {
+                undoDecision(intent)
+                return START_NOT_STICKY
+            }
         }
         startForeground(FG_NOTIF_ID, buildForegroundNotification())
         if (!running) {
@@ -56,6 +79,8 @@ class RelayService : Service() {
         running = false
         currentCall?.cancel()
         streamThread?.interrupt()
+        pendingCommits.values.forEach { mainHandler.removeCallbacks(it) }
+        pendingCommits.clear()
         prefs.monitoringEnabled = false
         super.onDestroy()
     }
@@ -68,6 +93,39 @@ class RelayService : Service() {
         prefs.monitoringEnabled = false
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
+    }
+
+    // 허용/거부를 누르면 바로 전송하지 않고 UNDO_WINDOW_MS만큼 기다렸다가 커밋한다.
+    // 그 사이에 실수로 눌렀다는 걸 알아채면 "실행 취소"로 되돌릴 수 있다.
+    private fun stageDecision(intent: Intent) {
+        val requestId = intent.getStringExtra(EXTRA_REQUEST_ID) ?: return
+        val decision = intent.getStringExtra(EXTRA_DECISION) ?: return
+        val replyTopic = intent.getStringExtra(EXTRA_REPLY_TOPIC) ?: return
+
+        cancelPending(requestId)
+        showStagedNotification(requestId, decision)
+        broadcastHistoryUpdated()
+
+        val commitRunnable = Runnable {
+            pendingCommits.remove(requestId)
+            ResponseHelper.respond(this, requestId, replyTopic, decision)
+        }
+        pendingCommits[requestId] = commitRunnable
+        mainHandler.postDelayed(commitRunnable, UNDO_WINDOW_MS)
+    }
+
+    private fun undoDecision(intent: Intent) {
+        val requestId = intent.getStringExtra(EXTRA_REQUEST_ID) ?: return
+        cancelPending(requestId)
+        val item = prefs.loadHistory().find { it.id == requestId }
+        if (item != null && item.status == RequestStatus.PENDING) {
+            postApprovalNotification(item) // 원래 허용/거부 알림으로 복원
+        }
+        broadcastHistoryUpdated()
+    }
+
+    private fun cancelPending(requestId: String) {
+        pendingCommits.remove(requestId)?.let { mainHandler.removeCallbacks(it) }
     }
 
     private fun streamLoop() {
@@ -169,8 +227,8 @@ class RelayService : Service() {
         val notifId = item.id.hashCode()
         val replyTopic = prefs.replyTopic
 
-        val allowIntent = replyPendingIntent(item.id, replyTopic, "allow", notifId * 2)
-        val denyIntent = replyPendingIntent(item.id, replyTopic, "deny", notifId * 2 + 1)
+        val allowIntent = stagePendingIntent(item.id, replyTopic, "allow", notifId * 2)
+        val denyIntent = stagePendingIntent(item.id, replyTopic, "deny", notifId * 2 + 1)
 
         val openAppIntent = PendingIntent.getActivity(
             this, notifId,
@@ -195,14 +253,42 @@ class RelayService : Service() {
         nm.notify(notifId, notification)
     }
 
-    private fun replyPendingIntent(requestId: String, replyTopic: String, decision: String, requestCode: Int): PendingIntent {
-        val intent = Intent(this, ReplyActionReceiver::class.java).apply {
-            action = "com.claudeapprover.REPLY_${requestId}_$decision"
-            putExtra(ReplyActionReceiver.EXTRA_REQUEST_ID, requestId)
-            putExtra(ReplyActionReceiver.EXTRA_DECISION, decision)
-            putExtra(ReplyActionReceiver.EXTRA_REPLY_TOPIC, replyTopic)
+    private fun showStagedNotification(requestId: String, decision: String) {
+        val notifId = requestId.hashCode()
+        val label = if (decision == "allow") getString(R.string.allow) else getString(R.string.deny)
+        val undoIntent = undoPendingIntent(requestId, notifId)
+
+        val notification = NotificationCompat.Builder(this, CHANNEL_APPROVAL)
+            .setSmallIcon(R.drawable.ic_stat_notify)
+            .setContentTitle("$label 처리 중…")
+            .setContentText("${UNDO_WINDOW_MS / 1000}초 안에 취소할 수 있어요")
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(false)
+            .addAction(0, getString(R.string.undo), undoIntent)
+            .build()
+
+        getSystemService(NotificationManager::class.java).notify(notifId, notification)
+    }
+
+    private fun stagePendingIntent(requestId: String, replyTopic: String, decision: String, requestCode: Int): PendingIntent {
+        val intent = Intent(this, RelayService::class.java).apply {
+            action = ACTION_STAGE_DECISION
+            putExtra(EXTRA_REQUEST_ID, requestId)
+            putExtra(EXTRA_DECISION, decision)
+            putExtra(EXTRA_REPLY_TOPIC, replyTopic)
         }
-        return PendingIntent.getBroadcast(
+        return PendingIntent.getService(
+            this, requestCode, intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    }
+
+    private fun undoPendingIntent(requestId: String, requestCode: Int): PendingIntent {
+        val intent = Intent(this, RelayService::class.java).apply {
+            action = ACTION_UNDO_DECISION
+            putExtra(EXTRA_REQUEST_ID, requestId)
+        }
+        return PendingIntent.getService(
             this, requestCode, intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )

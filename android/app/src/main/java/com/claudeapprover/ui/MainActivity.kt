@@ -1,7 +1,6 @@
 package com.claudeapprover.ui
 
 import android.Manifest
-import android.app.Activity
 import android.content.BroadcastReceiver
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -11,6 +10,7 @@ import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.os.CountDownTimer
 import android.os.PowerManager
 import android.provider.Settings
 import android.view.LayoutInflater
@@ -39,6 +39,11 @@ class MainActivity : AppCompatActivity() {
     private val historyUpdatedReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) = renderHistory()
     }
+
+    // 방금 앱 안에서 허용/거부를 눌러 "취소 가능" 상태로 보여주고 있는 요청 하나.
+    // 실제 커밋 타이밍은 RelayService가 관리하고, 여기 카운트다운은 화면 표시용이다.
+    private var stagedRequestId: String? = null
+    private var stagedCountdown: CountDownTimer? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -149,31 +154,79 @@ class MainActivity : AppCompatActivity() {
         val replyTopic = prefs.replyTopic
         items.forEach { item ->
             val itemBinding = ItemHistoryBinding.inflate(inflater, binding.historyContainer, false)
+            itemBinding.root.tag = item.id
             itemBinding.itemTitle.text = item.title
             itemBinding.itemBody.text = item.body
             itemBinding.itemStatus.text = statusLabel(item.status)
             itemBinding.itemStatus.setTextColor(statusColor(item.status))
 
-            if (item.status == RequestStatus.PENDING) {
-                itemBinding.itemActionRow.visibility = android.view.View.VISIBLE
-                itemBinding.itemAllowButton.setOnClickListener {
-                    respondTo(item.id, replyTopic, "allow")
+            when {
+                item.status == RequestStatus.PENDING && item.id == stagedRequestId -> {
+                    itemBinding.itemActionRow.visibility = android.view.View.GONE
+                    itemBinding.itemUndoRow.visibility = android.view.View.VISIBLE
+                    itemBinding.itemUndoButton.setOnClickListener { undoStaged(item.id) }
                 }
-                itemBinding.itemDenyButton.setOnClickListener {
-                    respondTo(item.id, replyTopic, "deny")
+                item.status == RequestStatus.PENDING -> {
+                    itemBinding.itemActionRow.visibility = android.view.View.VISIBLE
+                    itemBinding.itemUndoRow.visibility = android.view.View.GONE
+                    itemBinding.itemAllowButton.setOnClickListener {
+                        stageDecision(item.id, replyTopic, "allow")
+                    }
+                    itemBinding.itemDenyButton.setOnClickListener {
+                        stageDecision(item.id, replyTopic, "deny")
+                    }
                 }
-            } else {
-                itemBinding.itemActionRow.visibility = android.view.View.GONE
+                else -> {
+                    itemBinding.itemActionRow.visibility = android.view.View.GONE
+                    itemBinding.itemUndoRow.visibility = android.view.View.GONE
+                }
             }
 
             binding.historyContainer.addView(itemBinding.root)
         }
     }
 
-    private fun respondTo(requestId: String, replyTopic: String, decision: String) {
-        com.claudeapprover.service.ResponseHelper.respond(this, requestId, replyTopic, decision) {
-            runOnUiThread { renderHistory() }
+    private fun stageDecision(requestId: String, replyTopic: String, decision: String) {
+        val intent = Intent(this, RelayService::class.java).apply {
+            action = RelayService.ACTION_STAGE_DECISION
+            putExtra(RelayService.EXTRA_REQUEST_ID, requestId)
+            putExtra(RelayService.EXTRA_DECISION, decision)
+            putExtra(RelayService.EXTRA_REPLY_TOPIC, replyTopic)
         }
+        startService(intent)
+
+        stagedCountdown?.cancel()
+        stagedRequestId = requestId
+        renderHistory()
+        stagedCountdown = object : CountDownTimer(RelayService.UNDO_WINDOW_MS, 1000) {
+            override fun onTick(msLeft: Long) = updateUndoCountdownText(requestId, decision, msLeft)
+            override fun onFinish() {
+                if (stagedRequestId == requestId) stagedRequestId = null
+                renderHistory()
+            }
+        }.start()
+        updateUndoCountdownText(requestId, decision, RelayService.UNDO_WINDOW_MS)
+    }
+
+    private fun undoStaged(requestId: String) {
+        val intent = Intent(this, RelayService::class.java).apply {
+            action = RelayService.ACTION_UNDO_DECISION
+            putExtra(RelayService.EXTRA_REQUEST_ID, requestId)
+        }
+        startService(intent)
+        stagedCountdown?.cancel()
+        if (stagedRequestId == requestId) stagedRequestId = null
+        renderHistory()
+    }
+
+    private fun updateUndoCountdownText(requestId: String, decision: String, msLeft: Long) {
+        if (stagedRequestId != requestId) return
+        val label = if (decision == "allow") getString(R.string.allow) else getString(R.string.deny)
+        val secondsLeft = (msLeft / 1000).coerceAtLeast(1)
+        val row = (0 until binding.historyContainer.childCount)
+            .map { binding.historyContainer.getChildAt(it) }
+            .firstOrNull { it.tag == requestId } ?: return
+        row.findViewById<TextView>(R.id.itemUndoText)?.text = "${secondsLeft}초 후 $label 확정"
     }
 
     private fun statusLabel(status: RequestStatus): String = when (status) {
