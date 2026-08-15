@@ -173,6 +173,11 @@ function summarize(toolName, toolInput) {
   }
 }
 
+// 휴대폰에서 그냥 허용/거부만 눌러서는 제대로 판단할 수 없는 도구.
+// (예: ExitPlanMode는 계획 내용을 직접 읽어야 승인 여부를 판단할 수 있다.)
+// 이런 건 앱에 "컴퓨터에서 확인해주세요"라고만 알려주고, 결정은 평소처럼 터미널에서 하게 둔다.
+const PC_ONLY_TOOLS = new Set(["ExitPlanMode"]);
+
 async function main() {
   const config = loadConfig();
   if (!config) return; // 미설정 → 아무 출력 없이 종료 (평소 동작 유지)
@@ -190,7 +195,30 @@ async function main() {
   const { title, body } = summarize(toolName, payload.tool_input);
   const signature = signatureFor(toolName, payload.tool_input);
 
+  // 계획 승인처럼 폰에서 맹목적으로 허용/거부하면 안 되는 도구는
+  // 결정은 터미널에 맡기고, 앱에는 "확인이 필요하다"는 것만 알려준다.
+  if (PC_ONLY_TOOLS.has(toolName)) {
+    await postJson(config.askTopic, {
+      id: toolUseId,
+      type: "attention",
+      tool: toolName,
+      title: `컴퓨터에서 확인해주세요: ${title}`,
+      body: `${body}\n\n(이 요청은 내용을 직접 봐야 판단할 수 있어서 휴대폰으로는 승인/거부할 수 없어요)`,
+      cwd: payload.cwd,
+    });
+    return; // 결정 없음 → 평소처럼 터미널에서 처리
+  }
+
   if (loadAllowlist().includes(signature)) {
+    // 자동 승인도 조용히 넘어가지 않고 "이미 처리됐다"는 걸 폰에 남긴다.
+    await postJson(config.askTopic, {
+      id: toolUseId,
+      type: "info",
+      tool: toolName,
+      title,
+      body,
+      cwd: payload.cwd,
+    });
     console.log(
       JSON.stringify({
         hookSpecificOutput: {
@@ -205,6 +233,7 @@ async function main() {
 
   const sent = await postJson(config.askTopic, {
     id: toolUseId,
+    type: "approval",
     tool: toolName,
     title,
     body,
@@ -236,9 +265,17 @@ async function main() {
         },
       })
     );
+  } else {
+    // 타임아웃: 휴대폰에서 답을 못 받았다는 것도 알려주고, 평소처럼 터미널로 넘긴다.
+    await postJson(config.askTopic, {
+      id: toolUseId,
+      type: "attention",
+      tool: toolName,
+      title: `컴퓨터에서 확인해주세요: ${title}`,
+      body: `휴대폰 응답 시간이 지나서 터미널에서 직접 승인해야 해요.\n\n${body}`,
+      cwd: payload.cwd,
+    });
   }
-  // decision === null (타임아웃/오류): 아무것도 출력하지 않고 정상 종료
-  // → Claude Code가 평소처럼 터미널에서 직접 승인을 물어봄
 }
 
 main()

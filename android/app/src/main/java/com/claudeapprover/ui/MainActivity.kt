@@ -157,7 +157,7 @@ class MainActivity : AppCompatActivity() {
             itemBinding.root.tag = item.id
             itemBinding.itemTitle.text = item.title
             itemBinding.itemBody.text = item.body
-            itemBinding.itemStatus.text = statusLabel(item.status)
+            itemBinding.itemStatus.text = statusLabel(item)
             itemBinding.itemStatus.setTextColor(statusColor(item.status))
 
             when {
@@ -229,16 +229,18 @@ class MainActivity : AppCompatActivity() {
         row.findViewById<TextView>(R.id.itemUndoText)?.text = "${secondsLeft}초 후 $label 확정"
     }
 
-    private fun statusLabel(status: RequestStatus): String = when (status) {
+    private fun statusLabel(item: RequestItem): String = when (item.status) {
         RequestStatus.PENDING -> "대기 중"
-        RequestStatus.ALLOWED -> "허용됨"
+        RequestStatus.ALLOWED -> if (item.auto) "자동 허용됨" else "허용됨"
         RequestStatus.DENIED -> "거부됨"
+        RequestStatus.ATTENTION -> "컴퓨터에서 확인 필요"
         RequestStatus.EXPIRED -> "만료됨"
     }
 
     private fun statusColor(status: RequestStatus): Int = when (status) {
         RequestStatus.ALLOWED -> ContextCompat.getColor(this, R.color.brand_accent)
         RequestStatus.DENIED -> ContextCompat.getColor(this, R.color.brand_deny)
+        RequestStatus.ATTENTION -> ContextCompat.getColor(this, R.color.brand_warning)
         else -> ContextCompat.getColor(this, R.color.text_secondary)
     }
 }

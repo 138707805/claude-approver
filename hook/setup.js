@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Claude Approver 최초 설정 스크립트.
 // 1) 무작위 페어링 코드 생성 → ~/.claude/claude-approver.json 저장
-// 2) ~/.claude/settings.json 에 PreToolUse 훅 등록 (기존 설정은 백업 후 보존)
+// 2) ~/.claude/settings.json 에 PreToolUse/Stop/Notification 훅 등록
+//    (기존 Claude Approver 관련 훅은 지우고 다시 씀 — 여러 번 실행해도 안전함)
 "use strict";
 
 const fs = require("fs");
@@ -12,7 +13,14 @@ const crypto = require("crypto");
 const CLAUDE_DIR = path.join(os.homedir(), ".claude");
 const CONFIG_PATH = path.join(CLAUDE_DIR, "claude-approver.json");
 const SETTINGS_PATH = path.join(CLAUDE_DIR, "settings.json");
-const HOOK_SCRIPT_PATH = path.join(__dirname, "permission-relay.js");
+
+const PERMISSION_RELAY_PATH = path.join(__dirname, "permission-relay.js");
+const TASK_COMPLETE_PATH = path.join(__dirname, "task-complete-notify.js");
+const ATTENTION_NOTIFY_PATH = path.join(__dirname, "attention-notify.js");
+
+// 휴대폰으로 승인/거부가 가능한(=의미 있게 판단할 수 있는) 도구들.
+// ExitPlanMode는 permission-relay.js 안에서 "PC 전용"으로 따로 처리한다.
+const PRE_TOOL_USE_MATCHER = "Bash|Edit|Write|NotebookEdit|WebFetch|ExitPlanMode";
 
 function randomPairingCode() {
   return "ca-" + crypto.randomBytes(9).toString("base64url"); // 12자 랜덤
@@ -34,6 +42,21 @@ function loadOrCreateConfig() {
   return { config, created: true };
 }
 
+function isOurCommand(command) {
+  return typeof command === "string" && command.includes("claude-approver");
+}
+
+function removeOurHooks(settings) {
+  const hooks = settings.hooks || {};
+  for (const eventName of Object.keys(hooks)) {
+    hooks[eventName] = (hooks[eventName] || []).filter(
+      (entry) => !(entry.hooks || []).some((h) => isOurCommand(h.command))
+    );
+    if (hooks[eventName].length === 0) delete hooks[eventName];
+  }
+  settings.hooks = hooks;
+}
+
 function patchSettings() {
   let settings = {};
   if (fs.existsSync(SETTINGS_PATH)) {
@@ -46,24 +69,30 @@ function patchSettings() {
     }
   }
 
+  removeOurHooks(settings); // 예전 버전에서 등록한 훅이 있으면 지우고 최신 구성으로 다시 등록
   settings.hooks = settings.hooks || {};
+
   settings.hooks.PreToolUse = settings.hooks.PreToolUse || [];
+  settings.hooks.PreToolUse.push({
+    matcher: PRE_TOOL_USE_MATCHER,
+    hooks: [{ type: "command", command: `node "${PERMISSION_RELAY_PATH}"`, timeout: 180 }],
+  });
 
-  const command = `node "${HOOK_SCRIPT_PATH}"`;
-  const alreadyRegistered = settings.hooks.PreToolUse.some((entry) =>
-    (entry.hooks || []).some((h) => h.command === command)
-  );
+  settings.hooks.Stop = settings.hooks.Stop || [];
+  settings.hooks.Stop.push({
+    hooks: [{ type: "command", command: `node "${TASK_COMPLETE_PATH}"`, timeout: 15 }],
+  });
 
-  if (!alreadyRegistered) {
-    settings.hooks.PreToolUse.push({
-      matcher: "Bash|Edit|Write",
-      hooks: [{ type: "command", command, timeout: 180 }],
-    });
-    fs.writeFileSync(SETTINGS_PATH, JSON.stringify(settings, null, 2) + "\n");
-    console.log("settings.json에 PreToolUse 훅을 등록했습니다. (대상 도구: Bash, Edit, Write)");
-  } else {
-    console.log("훅이 이미 등록되어 있습니다.");
-  }
+  settings.hooks.Notification = settings.hooks.Notification || [];
+  settings.hooks.Notification.push({
+    hooks: [{ type: "command", command: `node "${ATTENTION_NOTIFY_PATH}"`, timeout: 15 }],
+  });
+
+  fs.writeFileSync(SETTINGS_PATH, JSON.stringify(settings, null, 2) + "\n");
+  console.log(`settings.json에 훅을 등록했습니다.`);
+  console.log(`  - PreToolUse (${PRE_TOOL_USE_MATCHER}): 승인/거부 요청`);
+  console.log(`  - Stop: 작업 완료 알림`);
+  console.log(`  - Notification: 컴퓨터 확인이 필요할 때 알림`);
 }
 
 function main() {

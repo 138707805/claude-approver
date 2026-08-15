@@ -24,8 +24,11 @@ class RelayService : Service() {
 
     companion object {
         const val CHANNEL_APPROVAL = "approval_requests"
+        const val CHANNEL_STATUS = "status_updates"
+        const val CHANNEL_INFO = "auto_handled_info"
         const val CHANNEL_FOREGROUND = "foreground_status"
         const val FG_NOTIF_ID = 1
+        const val STATUS_NOTIF_ID = 2
         const val ACTION_HISTORY_UPDATED = "com.claudeapprover.HISTORY_UPDATED"
         const val ACTION_STOP = "com.claudeapprover.STOP_SERVICE"
         const val ACTION_STAGE_DECISION = "com.claudeapprover.STAGE_DECISION"
@@ -168,17 +171,53 @@ class RelayService : Service() {
             val envelope = JSONObject(line)
             if (envelope.optString("event") != "message") return
             val inner = JSONObject(envelope.getString("message"))
-            val item = RequestItem(
-                id = inner.getString("id"),
-                tool = inner.optString("tool"),
-                title = inner.optString("title"),
-                body = inner.optString("body"),
-                cwd = inner.optString("cwd").ifEmpty { null },
-                timestamp = System.currentTimeMillis(),
-                status = RequestStatus.PENDING
-            )
-            prefs.addOrUpdate(item)
-            postApprovalNotification(item)
+
+            when (inner.optString("type", "approval")) {
+                "status" -> {
+                    postStatusNotification(inner.optString("title"), inner.optString("body"))
+                    return // 승인 이력이 아니라서 기록하지 않음
+                }
+                "info" -> {
+                    val item = RequestItem(
+                        id = inner.getString("id"),
+                        tool = inner.optString("tool"),
+                        title = inner.optString("title"),
+                        body = inner.optString("body"),
+                        cwd = inner.optString("cwd").ifEmpty { null },
+                        timestamp = System.currentTimeMillis(),
+                        status = RequestStatus.ALLOWED,
+                        auto = true
+                    )
+                    prefs.addOrUpdate(item)
+                    postInfoNotification(item)
+                }
+                "attention" -> {
+                    val item = RequestItem(
+                        id = inner.getString("id"),
+                        tool = inner.optString("tool"),
+                        title = inner.optString("title"),
+                        body = inner.optString("body"),
+                        cwd = inner.optString("cwd").ifEmpty { null },
+                        timestamp = System.currentTimeMillis(),
+                        status = RequestStatus.ATTENTION
+                    )
+                    prefs.addOrUpdate(item)
+                    postAttentionNotification(item)
+                }
+                else -> { // "approval"
+                    val item = RequestItem(
+                        id = inner.getString("id"),
+                        tool = inner.optString("tool"),
+                        title = inner.optString("title"),
+                        body = inner.optString("body"),
+                        cwd = inner.optString("cwd").ifEmpty { null },
+                        timestamp = System.currentTimeMillis(),
+                        status = RequestStatus.PENDING
+                    )
+                    prefs.addOrUpdate(item)
+                    postApprovalNotification(item)
+                }
+            }
             broadcastHistoryUpdated()
         } catch (e: Exception) {
             // 잘못된 형식의 메시지는 무시
@@ -197,6 +236,20 @@ class RelayService : Service() {
                 getString(R.string.channel_name),
                 NotificationManager.IMPORTANCE_HIGH
             ).apply { description = getString(R.string.channel_description) }
+        )
+        nm.createNotificationChannel(
+            NotificationChannel(
+                CHANNEL_STATUS,
+                getString(R.string.channel_status_name),
+                NotificationManager.IMPORTANCE_DEFAULT
+            ).apply { description = getString(R.string.channel_status_description) }
+        )
+        nm.createNotificationChannel(
+            NotificationChannel(
+                CHANNEL_INFO,
+                getString(R.string.channel_info_name),
+                NotificationManager.IMPORTANCE_LOW
+            ).apply { description = getString(R.string.channel_info_description) }
         )
         nm.createNotificationChannel(
             NotificationChannel(
@@ -251,6 +304,64 @@ class RelayService : Service() {
 
         val nm = getSystemService(NotificationManager::class.java)
         nm.notify(notifId, notification)
+    }
+
+    // 이미 자동으로 처리된 요청 — 결정할 건 없고, "이런 일이 있었다"는 기록만 조용히 남긴다.
+    private fun postInfoNotification(item: RequestItem) {
+        val openAppIntent = PendingIntent.getActivity(
+            this, item.id.hashCode(),
+            Intent(this, MainActivity::class.java),
+            PendingIntent.FLAG_IMMUTABLE
+        )
+        val notification = NotificationCompat.Builder(this, CHANNEL_INFO)
+            .setSmallIcon(R.drawable.ic_stat_notify)
+            .setContentTitle("자동 승인됨: ${item.title}")
+            .setStyle(NotificationCompat.BigTextStyle().bigText(item.body))
+            .setContentText(item.body)
+            .setContentIntent(openAppIntent)
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .build()
+        getSystemService(NotificationManager::class.java).notify(item.id.hashCode(), notification)
+    }
+
+    // 휴대폰으로는 제대로 판단할 수 없거나(계획 승인 등), 응답 시간이 지나 이미
+    // 터미널로 넘어간 요청 — "컴퓨터를 확인하라"는 것만 알려준다.
+    private fun postAttentionNotification(item: RequestItem) {
+        val openAppIntent = PendingIntent.getActivity(
+            this, item.id.hashCode(),
+            Intent(this, MainActivity::class.java),
+            PendingIntent.FLAG_IMMUTABLE
+        )
+        val notification = NotificationCompat.Builder(this, CHANNEL_STATUS)
+            .setSmallIcon(R.drawable.ic_stat_notify)
+            .setContentTitle(item.title)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(item.body))
+            .setContentText(item.body)
+            .setContentIntent(openAppIntent)
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .build()
+        getSystemService(NotificationManager::class.java).notify(item.id.hashCode(), notification)
+    }
+
+    // 한 턴의 작업이 끝났을 때. 이력에는 남기지 않고 알림만 띄운다(계속 쌓이지 않게 같은 ID 재사용).
+    private fun postStatusNotification(title: String, body: String) {
+        val openAppIntent = PendingIntent.getActivity(
+            this, STATUS_NOTIF_ID,
+            Intent(this, MainActivity::class.java),
+            PendingIntent.FLAG_IMMUTABLE
+        )
+        val notification = NotificationCompat.Builder(this, CHANNEL_STATUS)
+            .setSmallIcon(R.drawable.ic_stat_notify)
+            .setContentTitle(title.ifEmpty { "작업 완료" })
+            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+            .setContentText(body)
+            .setContentIntent(openAppIntent)
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .build()
+        getSystemService(NotificationManager::class.java).notify(STATUS_NOTIF_ID, notification)
     }
 
     private fun showStagedNotification(requestId: String, decision: String) {

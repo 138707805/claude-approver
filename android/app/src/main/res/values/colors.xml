@@ -3,6 +3,7 @@
     <color name="brand_primary_dark">#4834D4</color>
     <color name="brand_accent">#00B894</color>
     <color name="brand_deny">#D63031</color>
+    <color name="brand_warning">#E17055</color>
     <color name="background_light">#F7F7FB</color>
     <color name="background_dark">#15131E</color>
     <color name="surface_light">#FFFFFF</color>

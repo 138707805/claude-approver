@@ -23,6 +23,17 @@ PC 앞에 없어도 휴대폰 알림으로 받아서 그 자리에서 허용/거
 8. 실수로 알림을 밀어서 지워버렸어도 괜찮습니다 — 앱을 열어 "최근 요청" 목록에서
    아직 대기 중인 항목을 찾아 그 자리에서 허용/거부할 수 있습니다(여기도 5초
    취소 창이 똑같이 적용됩니다).
+9. **자동으로 승인된 것도 조용히 지나가지 않습니다.** "항상 허용" 기억 덕분에
+   묻지 않고 바로 진행된 요청도 앱에 "자동 승인됨"으로 기록되고 낮은 우선순위
+   알림이 옵니다 — PC 앞에 없을 때 뭔가 이미 실행/배포됐는데 나만 몰랐던 상황을
+   막기 위해서입니다.
+10. **휴대폰으로는 제대로 판단할 수 없는 요청**(예: 계획(plan) 승인 — 내용을
+    직접 봐야 판단할 수 있음)은 앱이 허용/거부 버튼을 주지 않고 "컴퓨터에서
+    확인해주세요"라고만 알려줍니다. 결정은 항상 터미널에서 하게 됩니다.
+    휴대폰 응답 시간이 지나 터미널로 넘어간 경우도 마찬가지로 알려줍니다.
+11. **작업 한 턴이 끝날 때마다** "작업 완료" 알림이 옵니다. Claude가 다음
+    지시를 기다리고 있다는 뜻입니다 — PC를 안 보고 있다가 이미 다 끝나고
+    배포까지 돼 있는데 모르고 있는 상황을 막기 위한 것입니다.
 
 **보안 관련 참고**: `ntfy.sh`는 일반 인터넷(HTTPS)로 통신하는 공개 서비스입니다.
 연결에 쓰이는 "페어링 코드"는 추측하기 어려운 무작위 문자열이라 사실상 나만 아는
@@ -51,8 +62,13 @@ node ~/claude-approver/hook/setup.js
 
 ## 감시 대상 도구 바꾸기
 
-기본값은 `Bash|Edit|Write`입니다. 다른 도구도 포함하거나 줄이고 싶으면
-`~/.claude/settings.json`의 `hooks.PreToolUse[].matcher` 값을 수정하세요.
+기본값은 `Bash|Edit|Write|NotebookEdit|WebFetch|ExitPlanMode`입니다(승인이 의미
+있는 도구들). Read/Glob/Grep처럼 원래 승인을 잘 묻지 않는 도구는 알림이 너무
+많아져서 기본에서 빠져 있습니다. 바꾸고 싶으면 `~/.claude/settings.json`의
+`hooks.PreToolUse[].matcher` 값을 수정하거나, `hook/setup.js`의
+`PRE_TOOL_USE_MATCHER` 상수를 고친 뒤 `node ~/claude-approver/hook/setup.js`를
+다시 실행하세요(다시 실행해도 안전합니다 — 기존 Claude Approver 훅을 지우고
+새로 등록합니다).
 
 ## 되돌리기 / 끄기
 
@@ -73,9 +89,12 @@ node ~/claude-approver/hook/setup.js
 
 ```
 claude-approver/
-  hook/                    PC(Claude Code)에서 실행되는 Node.js 훅 스크립트
-    permission-relay.js    실제 승인 중계 로직 (PreToolUse 훅)
-    setup.js               최초 1회 설정 스크립트
-  android/                 안드로이드 앱 (Kotlin, Gradle)
-  .github/workflows/       GitHub Actions로 APK 자동 빌드
+  hook/                       PC(Claude Code)에서 실행되는 Node.js 훅 스크립트
+    permission-relay.js       승인/거부 중계 로직 (PreToolUse 훅)
+    task-complete-notify.js   작업 완료 알림 (Stop 훅)
+    attention-notify.js       컴퓨터 확인 필요 알림 (Notification 훅)
+    notify-common.js          위 두 훅이 공유하는 공통 유틸리티
+    setup.js                  설정 스크립트 (여러 번 실행해도 안전)
+  android/                    안드로이드 앱 (Kotlin, Gradle)
+  .github/workflows/          GitHub Actions로 APK 자동 빌드
 ```
