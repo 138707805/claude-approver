@@ -10,11 +10,9 @@ import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
-import android.os.CountDownTimer
 import android.os.PowerManager
 import android.provider.Settings
 import android.view.LayoutInflater
-import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
@@ -40,10 +38,10 @@ class MainActivity : AppCompatActivity() {
         override fun onReceive(context: Context?, intent: Intent?) = renderHistory()
     }
 
-    // 방금 앱 안에서 허용/거부를 눌러 "취소 가능" 상태로 보여주고 있는 요청 하나.
-    // 실제 커밋 타이밍은 RelayService가 관리하고, 여기 카운트다운은 화면 표시용이다.
+    // 방금 허용/거부를 눌러 아직 PC로 확정 전송되지 않은 요청 하나(정정 가능 상태).
+    // 실제 커밋 타이밍은 RelayService가 관리한다. 상태가 바뀌면 ACTION_HISTORY_UPDATED
+    // 브로드캐스트가 오므로 여기서 따로 타이머를 돌 필요는 없다.
     private var stagedRequestId: String? = null
-    private var stagedCountdown: CountDownTimer? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -164,6 +162,7 @@ class MainActivity : AppCompatActivity() {
                 item.status == RequestStatus.PENDING && item.id == stagedRequestId -> {
                     itemBinding.itemActionRow.visibility = android.view.View.GONE
                     itemBinding.itemUndoRow.visibility = android.view.View.VISIBLE
+                    itemBinding.itemUndoText.text = getString(R.string.staged_undo_hint)
                     itemBinding.itemUndoButton.setOnClickListener { undoStaged(item.id) }
                 }
                 item.status == RequestStatus.PENDING -> {
@@ -194,18 +193,8 @@ class MainActivity : AppCompatActivity() {
             putExtra(RelayService.EXTRA_REPLY_TOPIC, replyTopic)
         }
         startService(intent)
-
-        stagedCountdown?.cancel()
         stagedRequestId = requestId
         renderHistory()
-        stagedCountdown = object : CountDownTimer(RelayService.UNDO_WINDOW_MS, 1000) {
-            override fun onTick(msLeft: Long) = updateUndoCountdownText(requestId, decision, msLeft)
-            override fun onFinish() {
-                if (stagedRequestId == requestId) stagedRequestId = null
-                renderHistory()
-            }
-        }.start()
-        updateUndoCountdownText(requestId, decision, RelayService.UNDO_WINDOW_MS)
     }
 
     private fun undoStaged(requestId: String) {
@@ -214,19 +203,8 @@ class MainActivity : AppCompatActivity() {
             putExtra(RelayService.EXTRA_REQUEST_ID, requestId)
         }
         startService(intent)
-        stagedCountdown?.cancel()
         if (stagedRequestId == requestId) stagedRequestId = null
         renderHistory()
-    }
-
-    private fun updateUndoCountdownText(requestId: String, decision: String, msLeft: Long) {
-        if (stagedRequestId != requestId) return
-        val label = if (decision == "allow") getString(R.string.allow) else getString(R.string.deny)
-        val secondsLeft = (msLeft / 1000).coerceAtLeast(1)
-        val row = (0 until binding.historyContainer.childCount)
-            .map { binding.historyContainer.getChildAt(it) }
-            .firstOrNull { it.tag == requestId } ?: return
-        row.findViewById<TextView>(R.id.itemUndoText)?.text = "${secondsLeft}초 후 $label 확정"
     }
 
     private fun statusLabel(item: RequestItem): String = when (item.status) {

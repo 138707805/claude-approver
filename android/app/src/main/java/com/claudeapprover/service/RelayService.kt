@@ -36,8 +36,15 @@ class RelayService : Service() {
         const val EXTRA_DECISION = "decision"
         const val EXTRA_REPLY_TOPIC = "reply_topic"
 
-        /** 허용/거부를 누른 뒤 실제로 전송되기 전까지 취소할 수 있는 시간. */
-        const val UNDO_WINDOW_MS = 5000L
+        /**
+         * 허용/거부를 누른 뒤 실제로 PC로 전송되기 전까지 앱에서 정정할 수 있는 시간.
+         * 너무 길면 Claude Code가 그만큼 오래 기다리게 되고, 너무 짧으면 정정할
+         * 틈이 없다 — 폰을 다시 꺼내 앱을 열고 고칠 정도의 여유(20초)로 잡았다.
+         * PC 쪽 훅이 응답을 기다리는 최대 시간(설정상 170초)보다는 항상 짧아야
+         * 정정이 실제로 반영된다 — 이 시간을 넘기면 PC 쪽은 이미 응답을 받아
+         * 처리를 끝낸 뒤라 앱에서 더 이상 되돌릴 수 없다.
+         */
+        const val UNDO_WINDOW_MS = 20_000L
     }
 
     private lateinit var prefs: Prefs
@@ -98,14 +105,15 @@ class RelayService : Service() {
     }
 
     // 허용/거부를 누르면 바로 전송하지 않고 UNDO_WINDOW_MS만큼 기다렸다가 커밋한다.
-    // 그 사이에 실수로 눌렀다는 걸 알아채면 "실행 취소"로 되돌릴 수 있다.
+    // 그 사이에 앱의 "최근 요청" 화면에서 실행취소로 정정할 수 있다. 단, 폰 화면을
+    // 가리는 별도 알림은 띄우지 않는다 — 원래 승인 알림은 누르는 즉시 조용히 닫는다.
     private fun stageDecision(intent: Intent) {
         val requestId = intent.getStringExtra(EXTRA_REQUEST_ID) ?: return
         val decision = intent.getStringExtra(EXTRA_DECISION) ?: return
         val replyTopic = intent.getStringExtra(EXTRA_REPLY_TOPIC) ?: return
 
         cancelPending(requestId)
-        showStagedNotification(requestId, decision)
+        getSystemService(NotificationManager::class.java).cancel(requestId.hashCode())
         broadcastHistoryUpdated()
 
         val commitRunnable = Runnable {
@@ -116,13 +124,11 @@ class RelayService : Service() {
         mainHandler.postDelayed(commitRunnable, UNDO_WINDOW_MS)
     }
 
+    // 정정은 앱의 "최근 요청" 화면에서만 이뤄지므로, 굳이 알림을 다시 띄우지 않고
+    // 대기 상태를 되돌리기만 한다 — 화면에 알림이 다시 뜨는 걸 원치 않기 때문.
     private fun undoDecision(intent: Intent) {
         val requestId = intent.getStringExtra(EXTRA_REQUEST_ID) ?: return
         cancelPending(requestId)
-        val item = prefs.loadHistory().find { it.id == requestId }
-        if (item != null && item.status == RequestStatus.PENDING) {
-            postApprovalNotification(item) // 원래 허용/거부 알림으로 복원
-        }
         broadcastHistoryUpdated()
     }
 
@@ -337,40 +343,12 @@ class RelayService : Service() {
         getSystemService(NotificationManager::class.java).notify(STATUS_NOTIF_ID, notification)
     }
 
-    private fun showStagedNotification(requestId: String, decision: String) {
-        val notifId = requestId.hashCode()
-        val label = if (decision == "allow") getString(R.string.allow) else getString(R.string.deny)
-        val undoIntent = undoPendingIntent(requestId, notifId)
-
-        val notification = NotificationCompat.Builder(this, CHANNEL_APPROVAL)
-            .setSmallIcon(R.drawable.ic_stat_notify)
-            .setContentTitle("$label 처리 중…")
-            .setContentText("${UNDO_WINDOW_MS / 1000}초 안에 취소할 수 있어요")
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setAutoCancel(false)
-            .addAction(0, getString(R.string.undo), undoIntent)
-            .build()
-
-        getSystemService(NotificationManager::class.java).notify(notifId, notification)
-    }
-
     private fun stagePendingIntent(requestId: String, replyTopic: String, decision: String, requestCode: Int): PendingIntent {
         val intent = Intent(this, RelayService::class.java).apply {
             action = ACTION_STAGE_DECISION
             putExtra(EXTRA_REQUEST_ID, requestId)
             putExtra(EXTRA_DECISION, decision)
             putExtra(EXTRA_REPLY_TOPIC, replyTopic)
-        }
-        return PendingIntent.getService(
-            this, requestCode, intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-    }
-
-    private fun undoPendingIntent(requestId: String, requestCode: Int): PendingIntent {
-        val intent = Intent(this, RelayService::class.java).apply {
-            action = ACTION_UNDO_DECISION
-            putExtra(EXTRA_REQUEST_ID, requestId)
         }
         return PendingIntent.getService(
             this, requestCode, intent,

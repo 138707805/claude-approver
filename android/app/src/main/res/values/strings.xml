@@ -12,6 +12,7 @@
     <string name="allow">허용</string>
     <string name="deny">거부</string>
     <string name="undo">실행 취소</string>
+    <string name="staged_undo_hint">아직 PC로 전송 전이에요 · 지금 정정할 수 있어요</string>
     <string name="channel_name">권한 승인 알림</string>
     <string name="channel_description">Claude Code가 승인을 요청할 때 오는 알림</string>
     <string name="channel_status_name">상태 알림</string>
