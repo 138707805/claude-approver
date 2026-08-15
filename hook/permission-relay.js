@@ -178,6 +178,68 @@ function summarize(toolName, toolInput) {
 // 이런 건 앱에 "컴퓨터에서 확인해주세요"라고만 알려주고, 결정은 평소처럼 터미널에서 하게 둔다.
 const PC_ONLY_TOOLS = new Set(["ExitPlanMode"]);
 
+// 폰 응답이 아예 없을 때(부재중 등) 사람 판단 없이 자동 허용해도 되는지 걸러내는 목록.
+// "평범한 작업"은 통과시키고, 권한/보안 관련 명령만 걸러서 사람 확인을 강제한다.
+// 의심스러우면 걸러서 사람에게 넘기는 쪽으로 판단 — 놓쳐서 자동 허용되는 것보다는
+// 안전한 걸 자동 허용 안 하는 실수가 훨씬 낫다.
+const HIGH_RISK_BASH_PATTERNS = [
+  /(^|[\s;&|])sudo\b/, // 관리자 권한 실행
+  /(^|[\s;&|])su(\s+-|\s+root)?(\s|$)/, // 사용자 전환
+  /\bchmod\b.*(\b777\b|\+s\b|-r\s+\/)/, // 전체 권한 부여 / setuid / 루트 하위 재귀 권한변경
+  /\bchown\b.*\broot\b/,
+  /\b(useradd|usermod|groupadd|passwd)\b/, // 계정/권한 관리
+  /\bsudoers\b/,
+  /authorized_keys|id_rsa|id_ed25519|id_ecdsa|\.ssh\/config\b/, // SSH 키/접근 관리
+  /\b(iptables|ufw|firewalld|setenforce)\b|\bselinux\b/, // 방화벽/보안모듈
+  /\b(curl|wget)\b[^|]*\|\s*(sudo\s+)?(sh|bash|zsh)\b/, // 원격 스크립트 다운받아 바로 실행
+  /\bdocker\b.*--privileged\b|\/var\/run\/docker\.sock/,
+  /\bcrontab\b|\bsystemctl\s+enable\b/, // 지속 실행(백도어성) 설정
+  /\.bashrc\b|\.zshrc\b|\.bash_profile\b|\.profile\b/, // 셸 시작 스크립트 변경(지속성)
+  /\baws\s+iam\b|\bgcloud\s+projects\s+add-iam-policy-binding\b|\baz\s+role\s+assignment\b/, // 클라우드 권한 부여
+  /\.aws\/credentials\b|\.npmrc\b|\.netrc\b|\.pgpass\b|\/etc\/shadow\b/, // 자격증명 파일 접근
+  /\bmkfs\b|\bdd\b.*of=\/dev\//, // 디스크 파괴
+  /\.github\/workflows\//, // CI 설정(비밀값 접근 가능한 파이프라인) 변경
+];
+
+const HIGH_RISK_PATH_PATTERNS = [
+  /\.ssh\//,
+  /\.aws\//,
+  /\.npmrc$|\.netrc$|\.pgpass$/,
+  /(^|\/)etc\//,
+  /\.github\/workflows\//,
+  /sudoers/,
+  /\.bashrc$|\.zshrc$|\.bash_profile$|\.profile$|\.bash_login$/,
+  /\.kube\/config$/,
+  /\.docker\/config\.json$/,
+];
+
+const HIGH_RISK_URL_PATTERNS = [
+  /169\.254\.169\.254/, // 클라우드 메타데이터 서버(자격증명 탈취 SSRF)
+  /metadata\.google\.internal/,
+  /metadata\.azure\.com/,
+];
+
+function isHighRisk(toolName, toolInput) {
+  const input = toolInput || {};
+  if (toolName === "Bash") {
+    const cmd = String(input.command || "").toLowerCase();
+    return HIGH_RISK_BASH_PATTERNS.some((re) => re.test(cmd));
+  }
+  if (toolName === "Write" || toolName === "Edit") {
+    const filePath = String(input.file_path || "").toLowerCase();
+    return HIGH_RISK_PATH_PATTERNS.some((re) => re.test(filePath));
+  }
+  if (toolName === "NotebookEdit") {
+    const filePath = String(input.notebook_path || "").toLowerCase();
+    return HIGH_RISK_PATH_PATTERNS.some((re) => re.test(filePath));
+  }
+  if (toolName === "WebFetch") {
+    const url = String(input.url || "").toLowerCase();
+    return HIGH_RISK_URL_PATTERNS.some((re) => re.test(url));
+  }
+  return false;
+}
+
 async function main() {
   const config = loadConfig();
   if (!config) return; // 미설정 → 아무 출력 없이 종료 (평소 동작 유지)
@@ -266,13 +328,39 @@ async function main() {
       })
     );
   } else {
-    // 타임아웃: 휴대폰에서 답을 못 받았다는 것도 알려주고, 평소처럼 터미널로 넘긴다.
+    // 타임아웃 = 폰 응답이 없었다는 뜻 (부재중이라 버튼을 못 눌렀을 가능성이 큼).
+    // 평범한 요청이면 사람 판단 없이 자동 허용하고, 권한/보안 관련으로 보이면
+    // 이전처럼 사람이 터미널에서 직접 봐야만 넘어가게 막는다.
+    const autoApprove = config.autoApproveWhenUnreachable !== false; // 기본값 true
+    if (autoApprove && !isHighRisk(toolName, payload.tool_input)) {
+      await postJson(config.askTopic, {
+        id: toolUseId,
+        type: "info",
+        tool: toolName,
+        title: `자동 허용됨 (응답 없음): ${title}`,
+        body: `${body}\n\n(폰 응답이 없어서 평범한 요청으로 판단해 자동으로 허용했어요)`,
+        cwd: payload.cwd,
+      });
+      console.log(
+        JSON.stringify({
+          hookSpecificOutput: {
+            hookEventName: "PreToolUse",
+            permissionDecision: "allow",
+            permissionDecisionReason: "휴대폰 응답 없음 + 평범한 요청으로 판단되어 자동 허용함",
+          },
+        })
+      );
+      return;
+    }
+
     await postJson(config.askTopic, {
       id: toolUseId,
       type: "attention",
       tool: toolName,
       title: `컴퓨터에서 확인해주세요: ${title}`,
-      body: `휴대폰 응답 시간이 지나서 터미널에서 직접 승인해야 해요.\n\n${body}`,
+      body: autoApprove
+        ? `휴대폰 응답 시간이 지났고, 권한/보안과 관련된 민감한 요청으로 보여 자동 허용하지 않았어요. 터미널에서 직접 승인해야 해요.\n\n${body}`
+        : `휴대폰 응답 시간이 지나서 터미널에서 직접 승인해야 해요.\n\n${body}`,
       cwd: payload.cwd,
     });
   }

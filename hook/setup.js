@@ -37,6 +37,9 @@ function loadOrCreateConfig() {
     askTopic: `${base}-ask`,
     replyTopic: `${base}-reply`,
     timeoutSeconds: 170,
+    // 폰 응답이 아예 없을 때(부재중 등) 평범한 요청은 자동 허용할지 여부.
+    // false로 바꾸면 기존처럼 항상 터미널에서 직접 승인해야 한다.
+    autoApproveWhenUnreachable: true,
   };
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
   return { config, created: true };
