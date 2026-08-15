@@ -7,6 +7,7 @@ private const val PREFS_NAME = "claude_approver_prefs"
 private const val KEY_PAIRING_CODE = "pairing_code"
 private const val KEY_MONITORING = "monitoring_enabled"
 private const val KEY_HISTORY = "history_json"
+private const val KEY_AUTO_APPROVE = "auto_approve_when_unreachable"
 private const val MAX_HISTORY = 30
 
 class Prefs(context: Context) {
@@ -22,6 +23,13 @@ class Prefs(context: Context) {
 
     val askTopic: String get() = "$pairingCode-ask"
     val replyTopic: String get() = "$pairingCode-reply"
+    val settingsTopic: String get() = "$pairingCode-settings"
+
+    // 부재중(폰 응답 없음)일 때 PC 훅이 평범한 요청을 자동 허용할지 여부.
+    // 기본값 true — PC 쪽 기본값과 맞춰둠(둘 다 안 건드리면 자동 허용 켜진 상태).
+    var autoApproveEnabled: Boolean
+        get() = sp.getBoolean(KEY_AUTO_APPROVE, true)
+        set(value) = sp.edit().putBoolean(KEY_AUTO_APPROVE, value).apply()
 
     fun loadHistory(): List<RequestItem> {
         val raw = sp.getString(KEY_HISTORY, "[]") ?: "[]"

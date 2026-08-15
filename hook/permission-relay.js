@@ -153,6 +153,76 @@ function waitForReply(replyTopic, requestId, timeoutMs) {
   });
 }
 
+function settingsTopicFor(config) {
+  if (config.pairingCode) return `${config.pairingCode}-settings`;
+  return config.askTopic.replace(/-ask$/, "-settings");
+}
+
+// 폰 앱의 "부재중 자동 허용" 스위치를 누르면 앱이 settingsTopic에 최신 값을
+// publish해둔다. 이 훅은 실시간으로 폰을 구독하고 있지 않으므로(호출마다
+// 새로 실행되고 끝나는 구조), 필요한 시점에 캐시된 메시지 중 가장 최근 것을
+// 읽어와서 최신 설정값을 가져온다. 스위치를 한 번도 안 건드렸거나 ntfy 캐시가
+// 만료됐으면 null을 반환한다.
+function fetchLatestAutoApproveSetting(settingsTopic, timeoutMs) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (val) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      req.destroy();
+      resolve(val);
+    };
+    const req = https.get(
+      {
+        hostname: NTFY_HOST,
+        path: `/${encodeURIComponent(settingsTopic)}/json?poll=1&since=all`,
+        headers: { Accept: "application/x-ndjson" },
+      },
+      (res) => {
+        let buffer = "";
+        res.setEncoding("utf8");
+        res.on("data", (chunk) => (buffer += chunk));
+        res.on("end", () => {
+          let latest = null;
+          for (const line of buffer.split("\n")) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+            try {
+              const envelope = JSON.parse(trimmed);
+              if (envelope.event !== "message" || !envelope.message) continue;
+              const msg = JSON.parse(envelope.message);
+              if (typeof msg.autoApproveWhenUnreachable === "boolean") {
+                latest = msg.autoApproveWhenUnreachable;
+              }
+            } catch {
+              // 무시하고 다음 줄 계속 처리
+            }
+          }
+          finish(latest);
+        });
+        res.on("error", () => finish(null));
+      }
+    );
+    req.on("error", () => finish(null));
+    const timer = setTimeout(() => finish(null), timeoutMs);
+  });
+}
+
+// ntfy 캐시가 나중에 만료돼도 마지막으로 알려진 설정값은 로컬에 남겨둔다.
+function persistAutoApproveSetting(value) {
+  try {
+    const raw = fs.readFileSync(CONFIG_PATH, "utf8");
+    const cfg = JSON.parse(raw);
+    if (cfg.autoApproveWhenUnreachable !== value) {
+      cfg.autoApproveWhenUnreachable = value;
+      fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2));
+    }
+  } catch {
+    // 저장 실패해도 이번 판단 자체엔 영향 없음
+  }
+}
+
 function summarize(toolName, toolInput) {
   const input = toolInput || {};
   switch (toolName) {
@@ -331,7 +401,11 @@ async function main() {
     // 타임아웃 = 폰 응답이 없었다는 뜻 (부재중이라 버튼을 못 눌렀을 가능성이 큼).
     // 평범한 요청이면 사람 판단 없이 자동 허용하고, 권한/보안 관련으로 보이면
     // 이전처럼 사람이 터미널에서 직접 봐야만 넘어가게 막는다.
-    const autoApprove = config.autoApproveWhenUnreachable !== false; // 기본값 true
+    // "자동 허용" 스위치 자체는 앱에서 켜고 끌 수 있으므로, 로컬 설정 파일보다
+    // 폰이 최근에 publish해둔 값을 우선으로 확인한다.
+    const remoteAutoApprove = await fetchLatestAutoApproveSetting(settingsTopicFor(config), 5000);
+    if (remoteAutoApprove !== null) persistAutoApproveSetting(remoteAutoApprove);
+    const autoApprove = remoteAutoApprove !== null ? remoteAutoApprove : config.autoApproveWhenUnreachable !== false; // 기본값 true
     if (autoApprove && !isHighRisk(toolName, payload.tool_input)) {
       await postJson(config.askTopic, {
         id: toolUseId,

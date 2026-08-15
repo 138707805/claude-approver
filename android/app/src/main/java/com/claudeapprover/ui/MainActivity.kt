@@ -23,7 +23,10 @@ import com.claudeapprover.data.RequestItem
 import com.claudeapprover.data.RequestStatus
 import com.claudeapprover.databinding.ActivityMainBinding
 import com.claudeapprover.databinding.ItemHistoryBinding
+import com.claudeapprover.net.NtfyClient
 import com.claudeapprover.service.RelayService
+import org.json.JSONObject
+import kotlin.concurrent.thread
 
 class MainActivity : AppCompatActivity() {
 
@@ -54,6 +57,12 @@ class MainActivity : AppCompatActivity() {
         binding.pairingCodeInput.setOnLongClickListener {
             copyCode()
             true
+        }
+
+        binding.autoApproveSwitch.isChecked = prefs.autoApproveEnabled
+        binding.autoApproveSwitch.setOnCheckedChangeListener { _, isChecked ->
+            prefs.autoApproveEnabled = isChecked
+            publishAutoApproveSetting(isChecked)
         }
 
         updateStatusUi()
@@ -121,6 +130,19 @@ class MainActivity : AppCompatActivity() {
             } catch (e: Exception) {
                 // 일부 기기에는 이 화면이 없을 수 있음 — 무시
             }
+        }
+    }
+
+    // PC 훅은 자기 혼자 계속 켜져 있는 게 아니라 매번 새로 실행되기 때문에, 폰이
+    // 바꾼 설정을 알려면 ntfy의 settingsTopic에서 최신 값을 읽어야 한다. 여기서는
+    // 그 값을 publish만 해두면 되고(스트리밍 서비스가 없어도 앱 안에서 바로 전송
+    // 가능하도록 백그라운드 스레드에서 처리), PC 쪽이 부재중 판단 시점에 가져간다.
+    private fun publishAutoApproveSetting(enabled: Boolean) {
+        val topic = prefs.settingsTopic
+        if (prefs.pairingCode.isBlank()) return
+        thread {
+            val body = JSONObject().put("autoApproveWhenUnreachable", enabled).toString()
+            NtfyClient.publish(topic, body)
         }
     }
 
