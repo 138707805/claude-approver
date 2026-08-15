@@ -136,12 +136,12 @@ class MainActivity : AppCompatActivity() {
     // PC 훅은 자기 혼자 계속 켜져 있는 게 아니라 매번 새로 실행되기 때문에, 폰이
     // 바꾼 설정을 알려면 ntfy의 settingsTopic에서 최신 값을 읽어야 한다. 여기서는
     // 그 값을 publish만 해두면 되고(스트리밍 서비스가 없어도 앱 안에서 바로 전송
-    // 가능하도록 백그라운드 스레드에서 처리), PC 쪽이 부재중 판단 시점에 가져간다.
+    // 가능하도록 백그라운드 스레드에서 처리), PC 쪽이 요청이 들어올 때마다 가져간다.
     private fun publishAutoApproveSetting(enabled: Boolean) {
         val topic = prefs.settingsTopic
         if (prefs.pairingCode.isBlank()) return
         thread {
-            val body = JSONObject().put("autoApproveWhenUnreachable", enabled).toString()
+            val body = JSONObject().put("autoApproveMode", enabled).toString()
             NtfyClient.publish(topic, body)
         }
     }

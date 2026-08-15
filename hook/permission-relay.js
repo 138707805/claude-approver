@@ -158,7 +158,7 @@ function settingsTopicFor(config) {
   return config.askTopic.replace(/-ask$/, "-settings");
 }
 
-// 폰 앱의 "부재중 자동 허용" 스위치를 누르면 앱이 settingsTopic에 최신 값을
+// 폰 앱의 "자동 허용 모드" 스위치를 누르면 앱이 settingsTopic에 최신 값을
 // publish해둔다. 이 훅은 실시간으로 폰을 구독하고 있지 않으므로(호출마다
 // 새로 실행되고 끝나는 구조), 필요한 시점에 캐시된 메시지 중 가장 최근 것을
 // 읽어와서 최신 설정값을 가져온다. 스위치를 한 번도 안 건드렸거나 ntfy 캐시가
@@ -192,8 +192,8 @@ function fetchLatestAutoApproveSetting(settingsTopic, timeoutMs) {
               const envelope = JSON.parse(trimmed);
               if (envelope.event !== "message" || !envelope.message) continue;
               const msg = JSON.parse(envelope.message);
-              if (typeof msg.autoApproveWhenUnreachable === "boolean") {
-                latest = msg.autoApproveWhenUnreachable;
+              if (typeof msg.autoApproveMode === "boolean") {
+                latest = msg.autoApproveMode;
               }
             } catch {
               // 무시하고 다음 줄 계속 처리
@@ -214,8 +214,8 @@ function persistAutoApproveSetting(value) {
   try {
     const raw = fs.readFileSync(CONFIG_PATH, "utf8");
     const cfg = JSON.parse(raw);
-    if (cfg.autoApproveWhenUnreachable !== value) {
-      cfg.autoApproveWhenUnreachable = value;
+    if (cfg.autoApproveMode !== value) {
+      cfg.autoApproveMode = value;
       fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2));
     }
   } catch {
@@ -248,7 +248,7 @@ function summarize(toolName, toolInput) {
 // 이런 건 앱에 "컴퓨터에서 확인해주세요"라고만 알려주고, 결정은 평소처럼 터미널에서 하게 둔다.
 const PC_ONLY_TOOLS = new Set(["ExitPlanMode"]);
 
-// 폰 응답이 아예 없을 때(부재중 등) 사람 판단 없이 자동 허용해도 되는지 걸러내는 목록.
+// 자동 허용 모드가 켜져 있을 때, 사람 판단 없이 자동 허용해도 되는지 걸러내는 목록.
 // "평범한 작업"은 통과시키고, 권한/보안 관련 명령만 걸러서 사람 확인을 강제한다.
 // 의심스러우면 걸러서 사람에게 넘기는 쪽으로 판단 — 놓쳐서 자동 허용되는 것보다는
 // 안전한 걸 자동 허용 안 하는 실수가 훨씬 낫다.
@@ -363,6 +363,49 @@ async function main() {
     return;
   }
 
+  // 자동 허용 모드가 켜져 있으면 폰에 승인 요청 알림을 아예 띄우지 않고
+  // 여기서 바로 판단한다. 평범한 요청은 조용히 허용, 권한/보안 관련으로
+  // 보이는 요청은 곧바로 "컴퓨터에서 확인해주세요"로 넘긴다 — 둘 다 폰이
+  // 응답할 때까지 기다리지 않는다. 이 스위치는 앱에서 언제든 켜고 끌 수
+  // 있으므로, 로컬 설정 파일보다 폰이 최근에 publish해둔 값을 우선한다.
+  const remoteAutoApprove = await fetchLatestAutoApproveSetting(settingsTopicFor(config), 4000);
+  if (remoteAutoApprove !== null) persistAutoApproveSetting(remoteAutoApprove);
+  const autoApprove = remoteAutoApprove !== null ? remoteAutoApprove : config.autoApproveMode !== false; // 기본값 true
+
+  if (autoApprove) {
+    if (isHighRisk(toolName, payload.tool_input)) {
+      await postJson(config.askTopic, {
+        id: toolUseId,
+        type: "attention",
+        tool: toolName,
+        title: `컴퓨터에서 확인해주세요: ${title}`,
+        body: `자동 허용 모드가 켜져 있지만, 권한/보안과 관련된 민감한 요청으로 보여 자동으로 허용하지 않았어요. 터미널에서 직접 승인해야 해요.\n\n${body}`,
+        cwd: payload.cwd,
+      });
+      return; // 결정 없음 → 평소처럼 터미널에서 처리
+    }
+
+    await postJson(config.askTopic, {
+      id: toolUseId,
+      type: "info",
+      tool: toolName,
+      title,
+      body,
+      cwd: payload.cwd,
+    });
+    console.log(
+      JSON.stringify({
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: "allow",
+          permissionDecisionReason: "자동 허용 모드 + 평범한 요청으로 판단되어 자동 허용함",
+        },
+      })
+    );
+    return;
+  }
+
+  // 자동 허용 모드가 꺼져 있을 때만 폰에 직접 물어보고 응답을 기다린다.
   const sent = await postJson(config.askTopic, {
     id: toolUseId,
     type: "approval",
@@ -398,43 +441,13 @@ async function main() {
       })
     );
   } else {
-    // 타임아웃 = 폰 응답이 없었다는 뜻 (부재중이라 버튼을 못 눌렀을 가능성이 큼).
-    // 평범한 요청이면 사람 판단 없이 자동 허용하고, 권한/보안 관련으로 보이면
-    // 이전처럼 사람이 터미널에서 직접 봐야만 넘어가게 막는다.
-    // "자동 허용" 스위치 자체는 앱에서 켜고 끌 수 있으므로, 로컬 설정 파일보다
-    // 폰이 최근에 publish해둔 값을 우선으로 확인한다.
-    const remoteAutoApprove = await fetchLatestAutoApproveSetting(settingsTopicFor(config), 5000);
-    if (remoteAutoApprove !== null) persistAutoApproveSetting(remoteAutoApprove);
-    const autoApprove = remoteAutoApprove !== null ? remoteAutoApprove : config.autoApproveWhenUnreachable !== false; // 기본값 true
-    if (autoApprove && !isHighRisk(toolName, payload.tool_input)) {
-      await postJson(config.askTopic, {
-        id: toolUseId,
-        type: "info",
-        tool: toolName,
-        title: `자동 허용됨 (응답 없음): ${title}`,
-        body: `${body}\n\n(폰 응답이 없어서 평범한 요청으로 판단해 자동으로 허용했어요)`,
-        cwd: payload.cwd,
-      });
-      console.log(
-        JSON.stringify({
-          hookSpecificOutput: {
-            hookEventName: "PreToolUse",
-            permissionDecision: "allow",
-            permissionDecisionReason: "휴대폰 응답 없음 + 평범한 요청으로 판단되어 자동 허용함",
-          },
-        })
-      );
-      return;
-    }
-
+    // 타임아웃 — 자동 허용 모드가 꺼져 있으므로 그냥 컴퓨터 확인으로 넘긴다.
     await postJson(config.askTopic, {
       id: toolUseId,
       type: "attention",
       tool: toolName,
       title: `컴퓨터에서 확인해주세요: ${title}`,
-      body: autoApprove
-        ? `휴대폰 응답 시간이 지났고, 권한/보안과 관련된 민감한 요청으로 보여 자동 허용하지 않았어요. 터미널에서 직접 승인해야 해요.\n\n${body}`
-        : `휴대폰 응답 시간이 지나서 터미널에서 직접 승인해야 해요.\n\n${body}`,
+      body: `휴대폰 응답 시간이 지나서 터미널에서 직접 승인해야 해요.\n\n${body}`,
       cwd: payload.cwd,
     });
   }

@@ -37,9 +37,11 @@ function loadOrCreateConfig() {
     askTopic: `${base}-ask`,
     replyTopic: `${base}-reply`,
     timeoutSeconds: 170,
-    // 폰 응답이 아예 없을 때(부재중 등) 평범한 요청은 자동 허용할지 여부.
-    // false로 바꾸면 기존처럼 항상 터미널에서 직접 승인해야 한다.
-    autoApproveWhenUnreachable: true,
+    // 평범한 요청은 사람 확인 없이 바로 자동 허용할지 여부(권한/보안 관련
+    // 요청은 이 값과 무관하게 항상 터미널 확인이 필요함). 앱의 "자동 허용
+    // 모드" 스위치로 언제든 켜고 끌 수 있다. false로 바꾸면 항상 폰에 직접
+    // 물어보고 응답을 기다리는 기존 방식으로 동작한다.
+    autoApproveMode: true,
   };
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
   return { config, created: true };
