@@ -25,7 +25,6 @@ class RelayService : Service() {
     companion object {
         const val CHANNEL_APPROVAL = "approval_requests"
         const val CHANNEL_STATUS = "status_updates"
-        const val CHANNEL_INFO = "auto_handled_info"
         const val CHANNEL_FOREGROUND = "foreground_status"
         const val FG_NOTIF_ID = 1
         const val STATUS_NOTIF_ID = 2
@@ -178,6 +177,7 @@ class RelayService : Service() {
                     return // 승인 이력이 아니라서 기록하지 않음
                 }
                 "info" -> {
+                    // 자동 승인된 항목은 알림 없이 "최근 요청" 목록에만 조용히 남긴다.
                     val item = RequestItem(
                         id = inner.getString("id"),
                         tool = inner.optString("tool"),
@@ -189,7 +189,6 @@ class RelayService : Service() {
                         auto = true
                     )
                     prefs.addOrUpdate(item)
-                    postInfoNotification(item)
                 }
                 "attention" -> {
                     val item = RequestItem(
@@ -246,13 +245,6 @@ class RelayService : Service() {
         )
         nm.createNotificationChannel(
             NotificationChannel(
-                CHANNEL_INFO,
-                getString(R.string.channel_info_name),
-                NotificationManager.IMPORTANCE_LOW
-            ).apply { description = getString(R.string.channel_info_description) }
-        )
-        nm.createNotificationChannel(
-            NotificationChannel(
                 CHANNEL_FOREGROUND,
                 getString(R.string.fg_channel_name),
                 NotificationManager.IMPORTANCE_LOW
@@ -304,25 +296,6 @@ class RelayService : Service() {
 
         val nm = getSystemService(NotificationManager::class.java)
         nm.notify(notifId, notification)
-    }
-
-    // 이미 자동으로 처리된 요청 — 결정할 건 없고, "이런 일이 있었다"는 기록만 조용히 남긴다.
-    private fun postInfoNotification(item: RequestItem) {
-        val openAppIntent = PendingIntent.getActivity(
-            this, item.id.hashCode(),
-            Intent(this, MainActivity::class.java),
-            PendingIntent.FLAG_IMMUTABLE
-        )
-        val notification = NotificationCompat.Builder(this, CHANNEL_INFO)
-            .setSmallIcon(R.drawable.ic_stat_notify)
-            .setContentTitle("자동 승인됨: ${item.title}")
-            .setStyle(NotificationCompat.BigTextStyle().bigText(item.body))
-            .setContentText(item.body)
-            .setContentIntent(openAppIntent)
-            .setAutoCancel(true)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
-            .build()
-        getSystemService(NotificationManager::class.java).notify(item.id.hashCode(), notification)
     }
 
     // 휴대폰으로는 제대로 판단할 수 없거나(계획 승인 등), 응답 시간이 지나 이미
