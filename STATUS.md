@@ -1,6 +1,20 @@
 # Claude Approver — 진행 상황 (2026-08-17 기준)
 
 새 채팅방에서 이어서 작업할 때 참고용으로 저장한 문서입니다.
+(최종 갱신: 2026-08-17, v1.9 배포 직후)
+
+## 새 채팅방에서 시작할 때
+
+1. 작업 폴더: `/home/user/claude-approver` (git 저장소, `master` 브랜치,
+   origin과 동기화된 상태)
+2. **이 문서를 먼저 끝까지 읽을 것.** 특히 "v1.9에서 바뀐 것", "환경/운영 메모",
+   "실제로 검증한 것 / 못 한 것" 절에 같은 실수를 반복하지 않게 하는 내용이 있다.
+3. 열려 있는 버그나 미완료 작업은 **없다.** v1.9가 최신이고 실사용 중이다.
+4. 코드를 바꿨으면 로컬에서 빌드할 수 없다(Java/Android SDK 없음) →
+   커밋 후 push하면 GitHub Actions가 APK를 빌드한다. 릴리스 절차는
+   "환경/운영 메모" 절 참고.
+5. PC 쪽 훅 코드를 바꿨으면 `node hook/setup.js`를 다시 실행해야 반영된다
+   (여러 번 실행해도 안전).
 
 ## 한 줄 요약
 
@@ -12,6 +26,8 @@ ntfy.sh(무료 중계 서비스)로 구성. **현재 v1.9까지 배포 완료, �
 
 - GitHub 저장소 (public): https://github.com/138707805/claude-approver
 - 최신 APK: https://github.com/138707805/claude-approver/releases/download/v1.9/claude-approver.apk
+  (v1.9 APK md5 `534b9b9e8b8d5312a77d48021dd48646`, 6,454,350바이트 — 릴리스 링크로 직접
+  내려받아 빌드본과 해시가 같은지 확인함)
 - 로컬 소스 경로: `/home/user/claude-approver`
 
 ## 아키텍처
@@ -87,11 +103,19 @@ claude-approver/
 ## PC 쪽 실제 설정 상태 (이 컴퓨터)
 
 - `~/.claude/claude-approver.json` — 페어링 코드/토픽/타임아웃(170초),
-  `autoApproveMode: true` 저장됨
+  `autoApproveMode: true`, `remoteInputMode: false`, `remoteInputWaitSeconds: 240`
+  저장됨. (폰 입력 모드는 앱 스위치로 켜는 것이 정상 경로 — 여기서 직접 켜면
+  폰이 꺼져 있어도 매 턴 4분씩 터미널이 멈춘다)
+- `~/.claude/claude-approver-state.json` — 세션별 폰 입력 연속 카운트 +
+  이미 쓴 프롬프트 id 목록(`consumedPrompts`). 하루 지난 세션 항목은 자동 정리됨.
 - `~/.claude/settings.json` — `hooks.PreToolUse`(matcher:
-  `Bash|Edit|Write|NotebookEdit|WebFetch|ExitPlanMode`), `hooks.Stop`,
-  `hooks.Notification` 세 개 등록됨. 원본은 `settings.json.claude-approver-backup`
-  으로 백업돼 있음.
+  `Bash|Edit|Write|NotebookEdit|WebFetch|ExitPlanMode`, timeout 180),
+  `hooks.Stop`(timeout **600**), `hooks.StopFailure`(timeout 15),
+  `hooks.Notification`(timeout 15) 네 개 등록됨. 원본은
+  `settings.json.claude-approver-backup`으로 백업돼 있음.
+  v1.9 작업 때 `node hook/setup.js`를 실행해 재등록 완료 — 이 파일은 133KB에
+  `permissions.allow` 1158개가 들어 있는데, 재등록 후에도 온전한지 확인했다
+  (setup.js는 자기 훅만 지우고 다시 쓴다).
 - `~/.claude/claude-approver-allowlist.json` — "항상 허용" 기억 목록 (Bash는
   명령어 전체, Write/Edit는 파일 경로 기준 exact match)
 
@@ -154,6 +178,19 @@ claude-approver/
   대기 시간은 훅 안에서 540초로 상한을 걸어 타임아웃보다 항상 짧게 유지한다 —
   타임아웃에 잘리면 그 사이 폰에서 보낸 지시가 그냥 버려지기 때문.
 - 기본값은 **꺼짐**. 켜져 있으면 매 턴 끝마다 터미널이 그만큼 멈춰 있게 된다.
+- **미리 보내둔 지시도 전달된다(120초 창)**: 대기를 시작할 때 프롬프트 토픽을
+  `since = now - 120초`로 구독한다. 그래서 "PC가 아직 일하는 중일 때" 앱
+  입력창에서 보내둔 지시도, 2분 안에 턴이 끝나면 그때 쓰인다. 처음엔
+  `now - 2초`였는데 그 경우 미리 보낸 지시가 그냥 버려지면서 앱 문구
+  ("보내둬도 다음 턴에 전달돼요")가 거짓말이 되는 문제가 있어서 고쳤다.
+  - 거슬러 올라가 읽으니 **같은 지시를 두 번 쓰는 걸 막아야 한다** — 앱이
+    프롬프트에 `id`(`p-<epoch>`)를 붙이고, 훅이 한 번 쓴 id를 상태 파일의
+    `consumedPrompts`(최근 50개)에 기록해서 건너뛴다.
+  - 같은 이유로 **"기다리지 않기"(cancel)는 현재 대기 중에 도착한 것만
+    인정한다**(ntfy 봉투의 `time`이 대기 시작 시각 이후일 때만). 안 그러면
+    예전에 눌러둔 취소가 되살아나 새 대기를 즉시 끝내버린다.
+  - 앱 문구도 실제 동작에 맞게 "2분 안에 턴이 끝날 경우 전달"로 바꿨다.
+    **이 창을 늘리거나 줄이면 앱 문구와 README도 같이 고칠 것.**
 
 ### 2. "작업 완료 알림이 안 온다" — 원인 3가지 (전부 수정)
 
@@ -215,6 +252,25 @@ Stop 시점에 트랜스크립트 파일에 마지막 메시지가 아직 없을
 | `attention` | 폰으론 판단 불가/타임아웃 | O (보통 우선순위) | 없음 | O (컴퓨터 확인 필요) |
 | `status` | 한 턴 작업 완료 (Stop 훅) | O | 폰 입력 모드면 답장/기다리지않기 | X (기록 안 함) |
 
+## v1.9에서 실제로 검증한 것 / 못 한 것
+
+명령을 직접 실행해서 확인한 것:
+
+- 폰 프롬프트 수신 → 훅이 `{"decision":"block","reason":"..."}` 출력 (정상)
+- 응답이 안 올 때 → 아무것도 출력하지 않고 종료 (터미널 대기로 정상 복귀)
+- 연속 8회 소진 상태 → 기다리지 않고 즉시 종료 + "한도 도달" 알림 + 상태 정리
+- 미리 보내둔 지시(PC가 대기 전) → 다음 턴 끝에 전달됨
+- 같은 지시 재사용 방지 → 두 번째 대기에서는 무시하고 시간 초과 (정상)
+- 사용량 집계 속도 0.25초 (69개 jsonl 중 최근 36시간 것만 읽음)
+- APK 내용 검증: 새 UI 문자열/버전 1.9/아이콘 리소스 포함 확인
+- 릴리스 링크 직접 다운로드 → 빌드본과 md5 동일, 저장소 `public` 확인
+
+**확인하지 못한 것 (안드로이드 기기 없음)**: 실제 폰에서의 런타임 동작 —
+알림창 답장(RemoteInput) UI, 새 런처 아이콘 표시, 앱 첫 화면 렌더링.
+v1.6 때 컴파일은 됐지만 실행 시 튕긴 전례가 있으니(Material2/M3 테마 문제),
+사용자가 "앱이 안 켜진다"고 하면 그 계열을 먼저 의심할 것. 이번엔 스위치를
+`SwitchMaterial`로 썼고 새로 추가한 위젯도 M2 계열만 사용했다.
+
 ## 알아두면 좋은 환경/운영 메모
 
 - 이 개발 환경(sandbox)엔 Java/Gradle/Android SDK가 없어서 APK를 로컬에서
@@ -232,6 +288,10 @@ Stop 시점에 트랜스크립트 파일에 마지막 메시지가 아직 없을
 - 새 APK를 낼 때마다: `dist/` 폴더를 지우고 다시 `gh run download`로 받아서
   (예전에 캐시된 파일을 실수로 재업로드한 적 있음 — 파일 크기/해시로 새
   빌드인지 항상 확인) → `gh release create vX.Y ...`.
+- **`unzip`이 이 환경에 없다** — APK 내용을 확인할 때는 파이썬 `zipfile`을 쓸 것
+  (`resources.arsc`에서 새 UI 문자열 grep, `AndroidManifest.xml`에서 버전 확인).
+  릴리스 링크를 사용자에게 주기 전엔 그 URL로 직접 `curl` 다운로드해서 로컬
+  빌드본과 md5가 같은지 비교하면 "예전 APK가 올라갔다"를 확실히 막을 수 있다.
 - `android/debug.keystore`는 절대 재생성하지 말 것 — 재생성하면 기존 설치된
   앱과 서명이 달라져서 사용자가 다시 삭제 후 설치해야 함.
 
