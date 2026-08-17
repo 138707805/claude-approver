@@ -34,7 +34,7 @@
     <string name="prompt_card_title">다음 지시 보내기</string>
     <string name="prompt_send">보내기</string>
     <string name="prompt_waiting">PC가 지금 기다리고 있어요 · 보내면 바로 이어집니다</string>
-    <string name="prompt_not_waiting">지금은 PC가 기다리는 중이 아니에요. 보내둬도 다음 턴이 끝날 때 전달돼요.</string>
+    <string name="prompt_not_waiting">지금은 PC가 기다리는 중이 아니에요. 지금 보내두면 2분 안에 턴이 끝날 경우 그때 전달되고, 그 뒤엔 전달되지 않아요.</string>
     <string name="prompt_empty">보낼 내용을 입력해주세요</string>
     <string name="prompt_sent">지시를 보냈어요</string>
 

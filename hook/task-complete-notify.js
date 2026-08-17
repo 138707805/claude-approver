@@ -34,11 +34,19 @@ const DEFAULT_WAIT_SECONDS = 240;
 // 걸려 훅이 강제 종료되면 그 사이 폰에서 보낸 지시가 그냥 버려지기 때문이다.
 const MAX_WAIT_SECONDS = 540;
 
+// 폰에서 "미리" 보내둔 지시도 받아들이기 위해, 대기를 시작할 때 이만큼 거슬러
+// 올라가서 확인한다. 턴이 끝나기 직전에 보낸 것(=아직 기다리는 중이 아니었던
+// 것)이 그냥 버려지지 않게 하려는 것. 같은 지시를 두 번 쓰지 않도록 한 번 쓴
+// 프롬프트 id는 상태 파일에 기록해두고 건너뛴다.
+const PROMPT_LOOKBACK_SEC = 120;
+const MAX_REMEMBERED_PROMPTS = 50;
+
 // 폰이 프롬프트 토픽에 올린 다음 지시를 기다린다. 취소 메시지가 오면 즉시
 // 포기하고, 시간이 다 되면 null을 반환한다.
-function waitForPrompt(promptTopic, sessionId, timeoutMs) {
+function waitForPrompt(promptTopic, sessionId, timeoutMs, consumedIds) {
   return new Promise((resolve) => {
-    const sinceSec = Math.floor(Date.now() / 1000) - 2;
+    const startSec = Math.floor(Date.now() / 1000);
+    const sinceSec = startSec - PROMPT_LOOKBACK_SEC;
     let settled = false;
     const finish = (val) => {
       if (settled) return;
@@ -72,9 +80,18 @@ function waitForPrompt(promptTopic, sessionId, timeoutMs) {
               // 메시지는 그 세션만 가져간다. 지목이 없으면(앱 입력창에서 그냥
               // 보낸 경우) 먼저 받은 쪽이 처리한다.
               if (msg.sessionId && sessionId && msg.sessionId !== sessionId) continue;
-              if (msg.cancel === true) return finish({ cancelled: true });
+
+              // "기다리지 않기"는 지금 이 대기에 대한 것만 유효하다 — 과거에
+              // 눌러둔 취소가 되살아나서 새 대기를 즉시 끝내면 안 된다.
+              if (msg.cancel === true) {
+                if ((envelope.time || 0) >= startSec) return finish({ cancelled: true });
+                continue;
+              }
+
               if (typeof msg.prompt === "string" && msg.prompt.trim()) {
-                return finish({ prompt: msg.prompt.trim() });
+                // 이미 한 번 쓴 지시는 건너뛴다(거슬러 올라가서 읽기 때문에 필요).
+                if (msg.id && consumedIds.includes(msg.id)) continue;
+                return finish({ prompt: msg.prompt.trim(), promptId: msg.id || "" });
               }
             } catch {
               // 무시하고 다음 줄 계속 처리
@@ -175,23 +192,26 @@ async function main() {
     return;
   }
 
-  const result = await waitForPrompt(topicFor(config, "prompt"), sessionId, waitMs);
+  const consumedIds = Array.isArray(state.consumedPrompts) ? state.consumedPrompts : [];
+  const result = await waitForPrompt(topicFor(config, "prompt"), sessionId, waitMs, consumedIds);
 
   if (result && result.prompt) {
+    if (result.promptId) {
+      consumedIds.push(result.promptId);
+      state.consumedPrompts = consumedIds.slice(-MAX_REMEMBERED_PROMPTS);
+    }
     if (sessionId) {
       state.sessions[sessionId] = { blockCount: usedContinuations + 1, updatedAt: Date.now() };
-      saveState(state);
     }
+    saveState(state);
     // Stop 훅의 공식 규격: block이면 Claude가 멈추지 않고 reason을 지시로 받아 계속한다.
     process.stdout.write(JSON.stringify({ decision: "block", reason: result.prompt }));
     return;
   }
 
   // 취소했거나 시간이 다 됐으면 평소대로 턴을 끝낸다(터미널에서 이어서 입력).
-  if (sessionId) {
-    delete state.sessions[sessionId];
-    saveState(state);
-  }
+  if (sessionId) delete state.sessions[sessionId];
+  saveState(state);
 }
 
 main()

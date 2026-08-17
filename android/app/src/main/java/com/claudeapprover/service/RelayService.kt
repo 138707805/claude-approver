@@ -174,7 +174,9 @@ class RelayService : Service() {
 
         val topic = prefs.promptTopic
         thread {
+            // id를 붙여야 PC 쪽이 "이미 쓴 지시"를 구분해서 두 번 쓰지 않는다.
             val body = JSONObject()
+                .put("id", "p-${System.currentTimeMillis()}")
                 .put("prompt", text)
                 .put("sessionId", sessionId)
                 .put("ts", System.currentTimeMillis())
