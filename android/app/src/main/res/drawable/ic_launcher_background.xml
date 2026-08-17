@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 런처 아이콘 배경 레이어. 짙은 남보라에서 보라로 흐르는 대각선 그라데이션 위에,
+     오른쪽 위에서 들어오는 옅은 빛을 겹쳐서 밋밋한 단색보다 입체감이 있게 했다. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <path android:pathData="M0,0 L108,0 L108,108 L0,108 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="0"
+                android:startY="0"
+                android:endX="108"
+                android:endY="108">
+                <item android:offset="0.0" android:color="#FF1B1145" />
+                <item android:offset="0.55" android:color="#FF4834D4" />
+                <item android:offset="1.0" android:color="#FF7C6CF0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <path android:pathData="M0,0 L108,0 L108,108 L0,108 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="radial"
+                android:centerX="78"
+                android:centerY="26"
+                android:gradientRadius="72">
+                <item android:offset="0.0" android:color="#59FFFFFF" />
+                <item android:offset="1.0" android:color="#00FFFFFF" />
+            </gradient>
+        </aapt:attr>
+    </path>
+</vector>

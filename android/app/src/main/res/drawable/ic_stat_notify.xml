@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- 상태바 알림 아이콘. 안드로이드가 알파 채널만 보고 단색으로 칠하므로
+     그라데이션 없이 실루엣만 그린다(체크는 뚫린 형태). -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"
@@ -7,5 +9,6 @@
     android:tint="#FFFFFF">
     <path
         android:fillColor="#FF000000"
-        android:pathData="M12,2 C7,2 4,5 4,10 C4,14 6.5,16.5 9,18 L9,20 C9,21 9.8,22 11,22 L13,22 C14.2,22 15,21 15,20 L15,18 C17.5,16.5 20,14 20,10 C20,5 17,2 12,2 Z" />
+        android:fillType="evenOdd"
+        android:pathData="M12,2 L20,4.8 L20,12 C20,16.5 16.7,19.7 12,22 C7.3,19.7 4,16.5 4,12 L4,4.8 Z M8,12.2 L9.6,10.6 L11.1,12.1 L15.6,7.6 L17.2,9.2 L11.1,15.3 Z" />
 </vector>

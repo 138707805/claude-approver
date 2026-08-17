@@ -11,8 +11,8 @@ android {
         applicationId = "com.claudeapprover"
         minSdk = 26
         targetSdk = 34
-        versionCode = 5
-        versionName = "1.4"
+        versionCode = 10
+        versionName = "1.9"
     }
 
     // 고정된 debug keystore를 사용해서, 매 빌드마다(CI 포함) 같은 서명이 나오도록 한다.

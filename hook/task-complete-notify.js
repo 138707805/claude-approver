@@ -1,31 +1,93 @@
 #!/usr/bin/env node
-// Claude Code Stop 훅: 한 턴이 끝날 때마다(작업이 끝나고 다음 지시를 기다릴 때)
-// 휴대폰에 "작업 완료" 알림을 보낸다. 결정을 내리는 훅이 아니라서 항상 조용히 종료한다.
+// Claude Code Stop 훅: 한 턴이 끝날 때마다 휴대폰에 "작업 완료" 알림을 보낸다.
+//
+// v1.9부터는 여기서 두 가지를 더 한다:
+//  1) 사용량 요약(오늘/현재 5시간 블록)을 같이 실어 보내서 앱에서 볼 수 있게 함
+//  2) "폰 입력 모드"가 켜져 있으면, 완료 알림을 보낸 뒤 폰에서 다음 지시가
+//     올 때까지 기다렸다가 그걸 그대로 Claude에게 이어붙인다
+//     (`{"decision":"block","reason":"<입력한 내용>"}` — Stop 훅의 공식 규격).
+//
+// 폰 입력이 안 오면(시간 초과/모드 꺼짐/오류) 아무것도 출력하지 않고 조용히
+// 끝낸다 — 그러면 평소대로 터미널에서 다음 지시를 기다리는 상태가 된다.
 "use strict";
 
-const fs = require("fs");
-const { loadConfig, readStdin, postJson } = require("./notify-common");
+const https = require("https");
+const {
+  loadConfig,
+  topicFor,
+  readStdin,
+  postJson,
+  fetchLatestSettings,
+  persistSettings,
+  loadState,
+  saveState,
+  NTFY_HOST,
+} = require("./notify-common");
+const usage = require("./usage");
 
-function extractLastAssistantText(transcriptPath) {
-  try {
-    const lines = fs.readFileSync(transcriptPath, "utf8").trim().split("\n");
-    for (let i = lines.length - 1; i >= 0; i--) {
-      let entry;
-      try {
-        entry = JSON.parse(lines[i]);
-      } catch {
-        continue;
+// Claude Code는 Stop 훅이 연속으로 턴을 이어붙이는 걸 8번까지만 허용하고,
+// 그 다음부터는 훅 출력을 무시하고 턴을 끝낸다. 우리가 늘릴 수 없는 플랫폼
+// 제한이라, 남은 횟수를 세서 폰에 그대로 보여준다.
+const MAX_CONTINUATIONS = 8;
+const DEFAULT_WAIT_SECONDS = 240;
+// setup.js가 이 훅에 걸어둔 타임아웃(600초)보다 반드시 짧아야 한다. 타임아웃에
+// 걸려 훅이 강제 종료되면 그 사이 폰에서 보낸 지시가 그냥 버려지기 때문이다.
+const MAX_WAIT_SECONDS = 540;
+
+// 폰이 프롬프트 토픽에 올린 다음 지시를 기다린다. 취소 메시지가 오면 즉시
+// 포기하고, 시간이 다 되면 null을 반환한다.
+function waitForPrompt(promptTopic, sessionId, timeoutMs) {
+  return new Promise((resolve) => {
+    const sinceSec = Math.floor(Date.now() / 1000) - 2;
+    let settled = false;
+    const finish = (val) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      req.destroy();
+      resolve(val);
+    };
+
+    const req = https.get(
+      {
+        hostname: NTFY_HOST,
+        path: `/${encodeURIComponent(promptTopic)}/json?poll=false&since=${sinceSec}`,
+        headers: { Accept: "application/x-ndjson" },
+      },
+      (res) => {
+        let buffer = "";
+        res.setEncoding("utf8");
+        res.on("data", (chunk) => {
+          buffer += chunk;
+          let idx;
+          while ((idx = buffer.indexOf("\n")) >= 0) {
+            const line = buffer.slice(0, idx).trim();
+            buffer = buffer.slice(idx + 1);
+            if (!line) continue;
+            try {
+              const envelope = JSON.parse(line);
+              if (envelope.event !== "message" || !envelope.message) continue;
+              const msg = JSON.parse(envelope.message);
+              // 여러 Claude 세션이 동시에 기다릴 수 있으므로, 특정 세션을 지목한
+              // 메시지는 그 세션만 가져간다. 지목이 없으면(앱 입력창에서 그냥
+              // 보낸 경우) 먼저 받은 쪽이 처리한다.
+              if (msg.sessionId && sessionId && msg.sessionId !== sessionId) continue;
+              if (msg.cancel === true) return finish({ cancelled: true });
+              if (typeof msg.prompt === "string" && msg.prompt.trim()) {
+                return finish({ prompt: msg.prompt.trim() });
+              }
+            } catch {
+              // 무시하고 다음 줄 계속 처리
+            }
+          }
+        });
+        res.on("error", () => finish(null));
+        res.on("end", () => finish(null));
       }
-      const message = entry.message || entry;
-      if (message && message.role === "assistant" && Array.isArray(message.content)) {
-        const textBlock = message.content.find((b) => b.type === "text" && b.text);
-        if (textBlock) return textBlock.text.trim();
-      }
-    }
-  } catch {
-    // 못 읽으면 그냥 일반 문구로 대체
-  }
-  return null;
+    );
+    req.on("error", () => finish(null));
+    const timer = setTimeout(() => finish(null), timeoutMs);
+  });
 }
 
 async function main() {
@@ -40,16 +102,96 @@ async function main() {
     payload = {};
   }
 
-  const preview = payload.transcript_path ? extractLastAssistantText(payload.transcript_path) : null;
-  const body = preview ? preview.slice(0, 300) : "Claude가 응답을 마치고 다음 지시를 기다리고 있어요.";
+  const sessionId = payload.session_id || "";
+  // Stop 훅이 이어붙인 턴이면 true. 사람이 터미널에서 직접 보낸 새 턴이면
+  // false라서, 연속 카운트를 여기서 0으로 되돌릴 수 있다.
+  const continuedByHook = payload.stop_hook_active === true;
 
-  await postJson(config.askTopic, {
+  const state = loadState();
+  if (!state.sessions) state.sessions = {};
+  const prior = continuedByHook ? state.sessions[sessionId] : null;
+  const usedContinuations = (prior && prior.blockCount) || 0;
+  const remaining = Math.max(0, MAX_CONTINUATIONS - usedContinuations);
+
+  const settingsTopic = topicFor(config, "settings");
+  const remoteSettings = await fetchLatestSettings(settingsTopic, 4000);
+  if (Object.keys(remoteSettings).length > 0) persistSettings(remoteSettings);
+  const remoteInput =
+    typeof remoteSettings.remoteInputMode === "boolean"
+      ? remoteSettings.remoteInputMode
+      : config.remoteInputMode === true; // 기본값 false — 켜야만 기다린다
+
+  // 대화 마지막 문장은 Stop 훅 입력으로 바로 들어온다. 트랜스크립트 파일은
+  // 이 시점에 마지막 메시지가 아직 안 들어가 있을 수 있어서 쓰지 않는다.
+  const lastMessage = (payload.last_assistant_message || "").trim();
+  const body = lastMessage
+    ? lastMessage.slice(0, 300)
+    : "Claude가 응답을 마치고 다음 지시를 기다리고 있어요.";
+
+  let snapshot = null;
+  try {
+    snapshot = usage.collect();
+  } catch {
+    // 사용량 집계가 실패해도 알림 자체는 보내야 한다
+  }
+
+  const configuredWait = config.remoteInputWaitSeconds || DEFAULT_WAIT_SECONDS;
+  const waitMs = Math.max(0, Math.min(configuredWait, MAX_WAIT_SECONDS) * 1000);
+  const willWait = remoteInput && remaining > 0 && waitMs > 0;
+
+  await postJson(topicFor(config, "ask"), {
     id: `stop-${Date.now()}`,
     type: "status",
     title: "작업 완료",
     body,
     cwd: payload.cwd,
+    sessionId,
+    usage: snapshot,
+    // 앱이 "답장" 버튼을 띄울지, 몇 초 동안 기다리는지 판단하는 데 쓴다.
+    awaitingPrompt: willWait,
+    waitSeconds: willWait ? Math.round(waitMs / 1000) : 0,
+    remainingContinuations: remaining,
   });
+
+  if (!willWait) {
+    // 폰 입력 모드가 켜져 있는데 연속 한도를 다 쓴 경우에만, 왜 안 기다리는지 알려준다.
+    if (remoteInput && remaining <= 0) {
+      await postJson(topicFor(config, "ask"), {
+        id: `limit-${Date.now()}`,
+        type: "attention",
+        title: "폰 입력 한도에 도달했어요",
+        body:
+          `폰에서 보낸 지시로 ${MAX_CONTINUATIONS}번 연속 이어서 작업했습니다. ` +
+          "Claude Code가 이 이상은 자동으로 이어주지 않아서 이번 턴은 여기서 끝납니다. " +
+          "PC에서 아무 지시나 한 번 보내면 다시 폰으로 이어갈 수 있어요.",
+        cwd: payload.cwd,
+        sessionId,
+      });
+    }
+    if (sessionId) {
+      delete state.sessions[sessionId];
+      saveState(state);
+    }
+    return;
+  }
+
+  const result = await waitForPrompt(topicFor(config, "prompt"), sessionId, waitMs);
+
+  if (result && result.prompt) {
+    if (sessionId) {
+      state.sessions[sessionId] = { blockCount: usedContinuations + 1, updatedAt: Date.now() };
+      saveState(state);
+    }
+    // Stop 훅의 공식 규격: block이면 Claude가 멈추지 않고 reason을 지시로 받아 계속한다.
+    process.stdout.write(JSON.stringify({ decision: "block", reason: result.prompt }));
+    return;
+  }
+
+  // 취소했거나 시간이 다 됐으면 평소대로 턴을 끝낸다(터미널에서 이어서 입력).
+  if (sessionId) {
+    delete state.sessions[sessionId];
+    saveState(state);
+  }
 }
 
 main()

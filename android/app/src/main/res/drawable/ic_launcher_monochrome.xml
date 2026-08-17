@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 안드로이드 13+ "테마 아이콘"용 단색 레이어. 시스템이 색을 직접 입히므로
+     모양만 단색으로 그린다(체크는 여기서도 뚫린 형태). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="M54,26 L78,34.5 L78,54 C78,67.5 68,77 54,83.5 C40,77 30,67.5 30,54 L30,34.5 Z M41.5,54.5 L46,50 L50.5,54.5 L64,41 L68.5,45.5 L50.5,63.5 Z" />
+</vector>

@@ -18,6 +18,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.claudeapprover.R
+import com.claudeapprover.data.ClaudeState
 import com.claudeapprover.data.Prefs
 import com.claudeapprover.data.RequestItem
 import com.claudeapprover.data.RequestStatus
@@ -26,6 +27,9 @@ import com.claudeapprover.databinding.ItemHistoryBinding
 import com.claudeapprover.net.NtfyClient
 import com.claudeapprover.service.RelayService
 import org.json.JSONObject
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlin.concurrent.thread
 
 class MainActivity : AppCompatActivity() {
@@ -38,7 +42,10 @@ class MainActivity : AppCompatActivity() {
     ) { granted -> if (granted) startMonitoring() else startMonitoring() }
 
     private val historyUpdatedReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context?, intent: Intent?) = renderHistory()
+        override fun onReceive(context: Context?, intent: Intent?) {
+            renderHistory()
+            renderStateAndUsage()
+        }
     }
 
     // 방금 허용/거부를 눌러 아직 PC로 확정 전송되지 않은 요청 하나(정정 가능 상태).
@@ -62,10 +69,19 @@ class MainActivity : AppCompatActivity() {
         binding.autoApproveSwitch.isChecked = prefs.autoApproveEnabled
         binding.autoApproveSwitch.setOnCheckedChangeListener { _, isChecked ->
             prefs.autoApproveEnabled = isChecked
-            publishAutoApproveSetting(isChecked)
+            publishSettings()
         }
 
+        binding.remoteInputSwitch.isChecked = prefs.remoteInputEnabled
+        binding.remoteInputSwitch.setOnCheckedChangeListener { _, isChecked ->
+            prefs.remoteInputEnabled = isChecked
+            publishSettings()
+        }
+
+        binding.promptSendButton.setOnClickListener { sendPrompt() }
+
         updateStatusUi()
+        renderStateAndUsage()
         renderHistory()
     }
 
@@ -83,6 +99,7 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         updateStatusUi()
+        renderStateAndUsage()
         renderHistory()
     }
 
@@ -137,13 +154,39 @@ class MainActivity : AppCompatActivity() {
     // 바꾼 설정을 알려면 ntfy의 settingsTopic에서 최신 값을 읽어야 한다. 여기서는
     // 그 값을 publish만 해두면 되고(스트리밍 서비스가 없어도 앱 안에서 바로 전송
     // 가능하도록 백그라운드 스레드에서 처리), PC 쪽이 요청이 들어올 때마다 가져간다.
-    private fun publishAutoApproveSetting(enabled: Boolean) {
-        val topic = prefs.settingsTopic
+    private fun publishSettings() {
         if (prefs.pairingCode.isBlank()) return
+        val topic = prefs.settingsTopic
+        val auto = prefs.autoApproveEnabled
+        val remote = prefs.remoteInputEnabled
         thread {
-            val body = JSONObject().put("autoApproveMode", enabled).toString()
+            val body = JSONObject()
+                .put("autoApproveMode", auto)
+                .put("remoteInputMode", remote)
+                .toString()
             NtfyClient.publish(topic, body)
         }
+    }
+
+    // 입력창에서 보낸 지시. PC가 마침 기다리는 중이면 바로 이어지고, 아니면
+    // ntfy 캐시에 남아 있다가 다음번에 기다리기 시작할 때 전달된다.
+    private fun sendPrompt() {
+        val text = binding.promptInput.text.toString().trim()
+        if (text.isEmpty()) {
+            Toast.makeText(this, getString(R.string.prompt_empty), Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (prefs.pairingCode.isBlank()) {
+            Toast.makeText(this, getString(R.string.pairing_code_hint), Toast.LENGTH_SHORT).show()
+            return
+        }
+        startService(Intent(this, RelayService::class.java).apply {
+            action = RelayService.ACTION_SEND_PROMPT
+            putExtra(RelayService.EXTRA_PROMPT_TEXT, text)
+            putExtra(RelayService.EXTRA_SESSION_ID, prefs.awaitingSessionId)
+        })
+        binding.promptInput.setText("")
+        Toast.makeText(this, getString(R.string.prompt_sent), Toast.LENGTH_SHORT).show()
     }
 
     private fun copyCode() {
@@ -164,6 +207,131 @@ class MainActivity : AppCompatActivity() {
             getString(R.string.connect_button)
         }
     }
+
+    // ---- Claude 상태 / 사용량 ----
+
+    private fun renderStateAndUsage() {
+        val (label, color) = when (prefs.claudeState) {
+            ClaudeState.WORKING -> getString(R.string.state_working) to R.color.brand_primary
+            ClaudeState.IDLE -> getString(R.string.state_idle) to R.color.brand_accent
+            ClaudeState.ERROR -> getString(R.string.state_error) to R.color.brand_deny
+            else -> getString(R.string.state_unknown) to R.color.text_secondary
+        }
+        binding.stateBadge.text = label
+        binding.stateBadge.setTextColor(ContextCompat.getColor(this, color))
+
+        val detail = prefs.claudeStateDetail
+        val at = prefs.claudeStateAt
+        val cwd = prefs.claudeCwd
+        binding.stateDetail.text = buildString {
+            if (detail.isNotEmpty()) append(detail)
+            if (at > 0L) {
+                if (isNotEmpty()) append("\n")
+                append(relativeTime(at))
+            }
+            if (cwd.isNotEmpty()) {
+                if (isNotEmpty()) append(" · ")
+                append(cwd.substringAfterLast('/'))
+            }
+        }
+
+        binding.promptWaitingText.text = if (prefs.isAwaitingPrompt) {
+            getString(R.string.prompt_waiting)
+        } else {
+            getString(R.string.prompt_not_waiting)
+        }
+        binding.promptWaitingText.setTextColor(
+            ContextCompat.getColor(this, if (prefs.isAwaitingPrompt) R.color.brand_accent else R.color.text_secondary)
+        )
+
+        binding.usageText.text = formatUsage(prefs.usageJson)
+        binding.usageDisclaimer.visibility =
+            if (prefs.usageJson.isEmpty()) android.view.View.GONE else android.view.View.VISIBLE
+    }
+
+    private fun formatUsage(json: String): String {
+        if (json.isEmpty()) return getString(R.string.usage_never)
+        return try {
+            val root = JSONObject(json)
+            val lines = mutableListOf<String>()
+
+            root.optJSONObject("today")?.let { today ->
+                lines.add(
+                    "오늘 · 응답 ${today.optLong("messages")}회 · " +
+                        "출력 ${compact(today.optLong("output"))} · " +
+                        "입력 ${compact(today.optLong("input") + today.optLong("cacheWrite") + today.optLong("cacheRead"))}"
+                )
+            }
+
+            val block = root.optJSONObject("block")
+            if (block != null) {
+                val totals = block.optJSONObject("totals")
+                val endsAt = block.optLong("endsAt")
+                val remain = endsAt - System.currentTimeMillis()
+                lines.add(
+                    "현재 5시간 구간 (${clock(block.optLong("startedAt"))}~${clock(endsAt)}" +
+                        (if (remain > 0) ", ${duration(remain)} 남음" else "") + ")"
+                )
+                if (totals != null) {
+                    lines.add(
+                        "   응답 ${totals.optLong("messages")}회 · 출력 ${compact(totals.optLong("output"))}"
+                    )
+                }
+            } else {
+                lines.add("현재 5시간 구간: 진행 중인 사용 없음")
+            }
+
+            root.optJSONObject("byModel")?.let { byModel ->
+                val parts = byModel.keys().asSequence().map { key ->
+                    "${modelLabel(key)} ${byModel.getJSONObject(key).optLong("messages")}회"
+                }.toList()
+                if (parts.isNotEmpty()) lines.add("모델별 · " + parts.joinToString(" / "))
+            }
+
+            val updatedAt = root.optLong("updatedAt")
+            if (updatedAt > 0L) lines.add("기준 시각 · ${relativeTime(updatedAt)}")
+
+            lines.joinToString("\n")
+        } catch (e: Exception) {
+            getString(R.string.usage_never)
+        }
+    }
+
+    private fun modelLabel(raw: String): String = when {
+        raw.contains("opus") -> "Opus"
+        raw.contains("sonnet") -> "Sonnet"
+        raw.contains("haiku") -> "Haiku"
+        raw.contains("fable") -> "Fable"
+        else -> raw
+    }
+
+    private fun compact(tokens: Long): String = when {
+        tokens >= 1_000_000 -> String.format(Locale.KOREA, "%.1fM", tokens / 1_000_000.0)
+        tokens >= 1_000 -> String.format(Locale.KOREA, "%.1fK", tokens / 1_000.0)
+        else -> tokens.toString()
+    }
+
+    private fun clock(epochMs: Long): String =
+        SimpleDateFormat("HH:mm", Locale.KOREA).format(Date(epochMs))
+
+    private fun duration(ms: Long): String {
+        val minutes = ms / 60_000
+        val h = minutes / 60
+        val m = minutes % 60
+        return if (h > 0) "${h}시간 ${m}분" else "${m}분"
+    }
+
+    private fun relativeTime(epochMs: Long): String {
+        val diff = System.currentTimeMillis() - epochMs
+        return when {
+            diff < 60_000 -> "방금"
+            diff < 3_600_000 -> "${diff / 60_000}분 전"
+            diff < 86_400_000 -> "${diff / 3_600_000}시간 전"
+            else -> SimpleDateFormat("M월 d일 HH:mm", Locale.KOREA).format(Date(epochMs))
+        }
+    }
+
+    // ---- 최근 요청 목록 ----
 
     private fun renderHistory() {
         val items = prefs.loadHistory().sortedByDescending { it.timestamp }
