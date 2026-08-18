@@ -247,6 +247,47 @@ class MainActivity : AppCompatActivity() {
         binding.usageText.text = formatUsage(prefs.usageJson)
         binding.usageDisclaimer.visibility =
             if (prefs.usageJson.isEmpty()) android.view.View.GONE else android.view.View.VISIBLE
+        renderBaseline(prefs.usageJson)
+    }
+
+    // "평소 대비" 게이지 — 실제 구독 한도가 아니라 이 폰이 쌓아온 이 컴퓨터의
+    // 기록(최근 평균/최대치) 대비 값이다. 훅 쪽에서 표본이 부족하면
+    // (최소 3일 · 3블록) null로 보내므로, 그 경우 "데이터 쌓는 중"으로 표시한다.
+    private fun renderBaseline(usageJson: String) {
+        var todayPct: Int? = null
+        var blockPct: Int? = null
+        if (usageJson.isNotEmpty()) {
+            try {
+                val baseline = JSONObject(usageJson).optJSONObject("baseline")
+                if (baseline != null) {
+                    if (!baseline.isNull("dailyAveragePct")) todayPct = baseline.optInt("dailyAveragePct")
+                    if (!baseline.isNull("blockMaxPct")) blockPct = baseline.optInt("blockMaxPct")
+                }
+            } catch (e: Exception) {
+                // 파싱 실패 시 그냥 "데이터 쌓는 중"으로 보여준다
+            }
+        }
+        applyGauge(binding.todayBaselinePctText, binding.todayBaselineBar, todayPct)
+        applyGauge(binding.blockBaselinePctText, binding.blockBaselineBar, blockPct)
+    }
+
+    private fun applyGauge(pctText: android.widget.TextView, bar: android.widget.ProgressBar, pct: Int?) {
+        if (pct == null) {
+            pctText.text = getString(R.string.baseline_collecting)
+            pctText.setTextColor(ContextCompat.getColor(this, R.color.text_secondary))
+            bar.progress = 0
+            bar.progressTintList = ContextCompat.getColorStateList(this, R.color.text_secondary)
+            return
+        }
+        val color = when {
+            pct >= 130 -> R.color.brand_warning
+            pct >= 100 -> R.color.brand_primary
+            else -> R.color.brand_accent
+        }
+        pctText.text = getString(R.string.baseline_pct_format, pct)
+        pctText.setTextColor(ContextCompat.getColor(this, color))
+        bar.progress = pct.coerceIn(0, 100)
+        bar.progressTintList = ContextCompat.getColorStateList(this, color)
     }
 
     private fun formatUsage(json: String): String {
