@@ -30,8 +30,8 @@ ntfy.sh(무료 중계 서비스)로 구성.
 ## 링크
 
 - GitHub 저장소 (public): https://github.com/138707805/claude-approver
-- 최신 APK: https://github.com/138707805/claude-approver/releases/download/v1.10/claude-approver.apk
-  (v1.10 APK md5 `ed30c997df98a01701f91b77fce48e16`, 6,458,162바이트 — 릴리스 링크로 직접
+- 최신 APK: https://github.com/138707805/claude-approver/releases/download/v1.11/claude-approver.apk
+  (v1.11 APK md5 `8e6e46132995e6af08341443f6797210`, 6,469,952바이트 — 릴리스 링크로 직접
   내려받아 빌드본과 해시가 같은지 확인함)
 - 로컬 소스 경로: `/home/user/claude-approver`
 
