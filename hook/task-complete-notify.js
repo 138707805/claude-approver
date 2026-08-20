@@ -21,6 +21,7 @@ const {
   persistSettings,
   loadState,
   saveState,
+  truncateForNtfy,
   NTFY_HOST,
 } = require("./notify-common");
 const usage = require("./usage");
@@ -130,6 +131,16 @@ async function main() {
   const usedContinuations = (prior && prior.blockCount) || 0;
   const remaining = Math.max(0, MAX_CONTINUATIONS - usedContinuations);
 
+  // 데몬(hook/daemon.js)이 다음에 "콜드 스타트"할 때 어느 폴더에서 시작할지,
+  // 그리고 지금 이 세션이 대기/작업 중인지 판단하는 근거. 여기서부터는
+  // saveState(state)가 호출되는 모든 지점에서 이 값이 같이 저장된다 — 별도로
+  // 파일을 다시 읽고 쓰는 헬퍼를 쓰면 아래 waitForPrompt(최대 9분 대기) 동안
+  // 다른 곳에서 파일을 건드렸을 때 서로 덮어쓰는 경합이 생길 수 있어서, 이미
+  // 들고 있는 state 객체를 그대로 갱신하는 방식으로 통일한다.
+  state.daemon = state.daemon || {};
+  if (payload.cwd) state.daemon.lastCwd = payload.cwd;
+  if (sessionId) state.daemon.lastSessionId = sessionId;
+
   const settingsTopic = topicFor(config, "settings");
   const remoteSettings = await fetchLatestSettings(settingsTopic, 4000);
   if (Object.keys(remoteSettings).length > 0) persistSettings(remoteSettings);
@@ -142,7 +153,7 @@ async function main() {
   // 이 시점에 마지막 메시지가 아직 안 들어가 있을 수 있어서 쓰지 않는다.
   const lastMessage = (payload.last_assistant_message || "").trim();
   const body = lastMessage
-    ? lastMessage.slice(0, 300)
+    ? truncateForNtfy(lastMessage, 1500)
     : "Claude가 응답을 마치고 다음 지시를 기다리고 있어요.";
 
   let snapshot = null;
@@ -185,15 +196,26 @@ async function main() {
         sessionId,
       });
     }
-    if (sessionId) {
-      delete state.sessions[sessionId];
-      saveState(state);
-    }
+    if (sessionId) delete state.sessions[sessionId];
+    // 턴이 완전히 끝남 = 데몬 입장에서 "이 PC는 이제 진짜 쉬는 중"이라는 신호.
+    state.daemon.busyUntil = 0;
+    saveState(state);
     return;
   }
 
+  // 지금부터 최대 waitMs(9분 상한)만큼 폰 입력을 기다린다 — 그 사이에 폰에서
+  // 지시가 오면(데몬이 유휴로 착각해 새 세션을 겹쳐 시작하지 않도록) 데몬에게
+  // "이미 여기서 기다리고 있다"는 걸 알려야 한다.
+  state.daemon.waitingUntil = Date.now() + waitMs;
+  state.daemon.waitingSessionId = sessionId;
+  saveState(state);
+
   const consumedIds = Array.isArray(state.consumedPrompts) ? state.consumedPrompts : [];
   const result = await waitForPrompt(topicFor(config, "prompt"), sessionId, waitMs, consumedIds);
+
+  // 대기가 끝났으니(응답을 받았든 취소/타임아웃이든) 더는 "기다리는 중"이 아니다.
+  state.daemon.waitingUntil = 0;
+  state.daemon.waitingSessionId = "";
 
   if (result && result.prompt) {
     if (result.promptId) {
@@ -210,6 +232,8 @@ async function main() {
   }
 
   // 취소했거나 시간이 다 됐으면 평소대로 턴을 끝낸다(터미널에서 이어서 입력).
+  // 이것도 턴이 완전히 끝나는 경우이므로 "쉬는 중"으로 표시한다.
+  state.daemon.busyUntil = 0;
   if (sessionId) delete state.sessions[sessionId];
   saveState(state);
 }

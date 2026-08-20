@@ -25,6 +25,10 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".ui.SettingsActivity"
+            android:exported="false" />
+
         <service
             android:name=".service.RelayService"
             android:foregroundServiceType="dataSync"

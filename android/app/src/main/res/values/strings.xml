@@ -52,4 +52,16 @@
     <string name="state_idle">대기 중</string>
     <string name="state_error">멈춤</string>
     <string name="state_unknown">알 수 없음</string>
+    <string name="view_full_status">전체 보기</string>
+    <string name="detail_dialog_close">닫기</string>
+    <string name="detail_dialog_meta_format">도구: %1$s\n폴더: %2$s\n시각: %3$s</string>
+
+    <!-- 설정 화면 -->
+    <string name="settings_title">설정</string>
+    <string name="back_button_desc">뒤로가기</string>
+    <string name="pairing_banner_text">아직 PC와 연결되지 않았어요. 설정에서 페어링 코드를 입력하세요.</string>
+
+    <!-- 데몬(상시 원격 실행) 상태 -->
+    <string name="daemon_status_alive_idle">지금 보내면 PC가 새로 깨어나 시작해요</string>
+    <string name="daemon_status_offline">PC에서 원격 실행 프로그램이 꺼져 있어요 · 지금 보내도 PC를 켜기 전엔 전달되지 않아요</string>
 </resources>

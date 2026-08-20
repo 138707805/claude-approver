@@ -27,6 +27,17 @@ function topicFor(config, suffix) {
   return config.askTopic.replace(/-ask$/, `-${suffix}`);
 }
 
+// ntfy 메시지 크기 한도를 넘지 않는 선에서 최대한 길게 보여주기 위한 자르기.
+// 실제로 자른 경우에만 표시를 붙인다 — 안 잘렸는데 잘렸다고 하면 안 되고,
+// 잘렸는데 티가 안 나면 사용자가 "이게 전체 내용이구나" 하고 오해하게 된다.
+function truncateForNtfy(text, max) {
+  const s = String(text || "");
+  if (Buffer.byteLength(s, "utf8") <= max) return s;
+  let cut = s.slice(0, max);
+  while (Buffer.byteLength(cut, "utf8") > max) cut = cut.slice(0, -1);
+  return cut + "\n\n…(내용이 길어 일부 생략됨)";
+}
+
 function readStdin() {
   return new Promise((resolve) => {
     let data = "";
@@ -157,6 +168,50 @@ function saveState(state) {
   }
 }
 
+// ---- 데몬(hook/daemon.js)과 훅들이 공유하는 "지금 PC가 뭘 하고 있는지" 상태 ----
+// claude-approver-state.json의 최상위 daemon 객체에 저장한다. 파일 락은 안 쓴다
+// (기존 프로젝트도 다른 상태 파일들에 안 쓰고 있고, 이 프로젝트 규모에서 동시
+// 쓰기 충돌 빈도는 무시할 만한 수준).
+
+function touchBusy(minutes = 6) {
+  const state = loadState();
+  state.daemon = state.daemon || {};
+  state.daemon.busyUntil = Date.now() + minutes * 60000;
+  saveState(state);
+}
+
+function clearBusy() {
+  const state = loadState();
+  state.daemon = state.daemon || {};
+  state.daemon.busyUntil = 0;
+  saveState(state);
+}
+
+function markWaiting(sessionId, untilMs) {
+  const state = loadState();
+  state.daemon = state.daemon || {};
+  state.daemon.waitingUntil = untilMs;
+  state.daemon.waitingSessionId = sessionId || "";
+  saveState(state);
+}
+
+function clearWaiting() {
+  const state = loadState();
+  state.daemon = state.daemon || {};
+  state.daemon.waitingUntil = 0;
+  state.daemon.waitingSessionId = "";
+  saveState(state);
+}
+
+function touchLastCwd(cwd, sessionId) {
+  if (!cwd) return;
+  const state = loadState();
+  state.daemon = state.daemon || {};
+  state.daemon.lastCwd = cwd;
+  if (sessionId) state.daemon.lastSessionId = sessionId;
+  saveState(state);
+}
+
 module.exports = {
   loadConfig,
   topicFor,
@@ -166,6 +221,12 @@ module.exports = {
   persistSettings,
   loadState,
   saveState,
+  truncateForNtfy,
+  touchBusy,
+  clearBusy,
+  markWaiting,
+  clearWaiting,
+  touchLastCwd,
   CONFIG_PATH,
   NTFY_HOST,
 };

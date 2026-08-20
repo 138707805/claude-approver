@@ -58,6 +58,9 @@ class RelayService : Service() {
          * ntfy.sh의 무료 캐시가 12시간이라 그보다 더 올라가봐야 의미가 없다.
          */
         const val MAX_BACKFILL_SEC = 12 * 60 * 60L
+
+        /** PC 데몬(hook/daemon.js)의 하트비트(60초 간격)를 확인하는 폴링 주기. */
+        const val DAEMON_HEARTBEAT_POLL_MS = 60_000L
     }
 
     private lateinit var prefs: Prefs
@@ -68,10 +71,21 @@ class RelayService : Service() {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val pendingCommits = mutableMapOf<String, Runnable>()
 
+    // PC 데몬이 살아있는지 주기적으로 확인 — 데몬은 settingsTopic에 하트비트를
+    // publish하므로(자기 훅 프로세스처럼 일회성이 아니라 상시 실행), 그 값을
+    // 최신인지 확인해서 앱이 "지금 보내면 처리된다"를 안내할 수 있게 한다.
+    private val daemonHeartbeatCheck = object : Runnable {
+        override fun run() {
+            pollDaemonHeartbeat()
+            mainHandler.postDelayed(this, DAEMON_HEARTBEAT_POLL_MS)
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         prefs = Prefs(this)
         createChannels()
+        mainHandler.post(daemonHeartbeatCheck)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -115,8 +129,26 @@ class RelayService : Service() {
         streamThread?.interrupt()
         pendingCommits.values.forEach { mainHandler.removeCallbacks(it) }
         pendingCommits.clear()
+        mainHandler.removeCallbacks(daemonHeartbeatCheck)
         prefs.monitoringEnabled = false
         super.onDestroy()
+    }
+
+    private fun pollDaemonHeartbeat() {
+        if (prefs.pairingCode.isBlank()) return
+        val topic = prefs.settingsTopic
+        thread {
+            val latest = NtfyClient.fetchLatestFieldsContaining(topic, "daemonAlive") ?: return@thread
+            try {
+                val msg = JSONObject(latest)
+                if (msg.optBoolean("daemonAlive", false)) {
+                    val updatedAt = msg.optLong("updatedAt", System.currentTimeMillis())
+                    mainHandler.post { prefs.daemonAliveAt = updatedAt }
+                }
+            } catch (e: Exception) {
+                // 무시 — 다음 폴링에서 다시 시도
+            }
+        }
     }
 
     override fun onBind(intent: Intent?) = null
@@ -384,6 +416,8 @@ class RelayService : Service() {
                 append("\n\n(폰으로 이어서 지시할 수 있는 횟수가 ${remaining}번 남았어요)")
             }
         }
+        prefs.lastStatusTitle = title
+        prefs.lastStatusBody = body
         postStatusNotification(title, body, awaiting && waitSeconds > 0, sessionId)
     }
 

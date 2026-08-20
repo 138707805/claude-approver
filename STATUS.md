@@ -1,15 +1,20 @@
-# Claude Approver — 진행 상황 (2026-08-18 기준)
+# Claude Approver — 진행 상황 (2026-08-20 기준)
 
 새 채팅방에서 이어서 작업할 때 참고용으로 저장한 문서입니다.
-(최종 갱신: 2026-08-18, v1.10 작업 중)
+(최종 갱신: 2026-08-20, v1.11 작업 중)
 
 ## 새 채팅방에서 시작할 때
 
 1. 작업 폴더: `/home/user/claude-approver` (git 저장소, `master` 브랜치,
    origin과 동기화된 상태)
-2. **이 문서를 먼저 끝까지 읽을 것.** 특히 "v1.10에서 바뀐 것", "환경/운영 메모",
+2. **이 문서를 먼저 끝까지 읽을 것.** 특히 "v1.11에서 바뀐 것", "환경/운영 메모",
    "실제로 검증한 것 / 못 한 것" 절에 같은 실수를 반복하지 않게 하는 내용이 있다.
-3. 열려 있는 버그나 미완료 작업은 **없다.**
+3. 열려 있는 버그나 미완료 작업은 **없다.** (단, v1.11의 데몬 헤드리스 spawn
+   경로는 실기기/실 세션으로 끝까지 확인하지 못했다 — 아래 "v1.11에서 실제로
+   검증한 것 / 못 한 것" 참고)
+3-1. 이번 라운드는 "스펙 드리븐" 방식으로 진행했다 — `specs/phone-remote-control/`
+   아래 `requirements.md`/`design.md`/`tasks.md`에 요구사항·설계·작업목록이
+   있으니, v1.11을 더 손볼 일이 있으면 거기부터 볼 것.
 4. 코드를 바꿨으면 로컬에서 빌드할 수 없다(Java/Android SDK 없음) →
    커밋 후 push하면 GitHub Actions가 APK를 빌드한다. 릴리스 절차는
    "환경/운영 메모" 절 참고.
@@ -32,14 +37,26 @@ ntfy.sh(무료 중계 서비스)로 구성.
 
 ## 아키텍처
 
-- **PC → 폰**: Claude Code `PreToolUse`/`Stop`/`Notification` 훅(Node.js, 외부
-  의존성 없음)이 `ntfy.sh`에 메시지를 publish.
+- **PC → 폰**: Claude Code `PreToolUse`/`Stop`/`StopFailure`/`Notification` 훅
+  (Node.js, 외부 의존성 없음)이 `ntfy.sh`에 메시지를 publish. 이 훅들은 전부
+  **일회성 프로세스** — 호출될 때 실행되고 끝난다.
 - **폰**: 안드로이드 앱(Kotlin)이 foreground service로 ntfy.sh 스트림을 구독,
   시스템 알림으로 표시. 버튼 응답은 다시 ntfy.sh에 publish.
 - **폰 → PC**: 훅이 응답 topic을 스트리밍으로 기다렸다가 `permissionDecision`
   (`allow`/`deny`/미출력=폴백)을 stdout JSON으로 반환.
-- 페어링은 무작위 문자열(`ca-xxxx...`) 하나로, `<code>-ask` / `<code>-reply`
-  두 개의 ntfy 토픽을 유도해서 사용. 인증서버 없음, ntfy.sh는 완전 무료/공개.
+- **PC 상시 데몬(v1.11~, `hook/daemon.js`)**: 위 훅들과 달리 계속 떠 있는
+  프로세스. `<code>-prompt` 토픽을 상시 구독하다가, PC가 완전히 유휴 상태일
+  때 폰에서 지시가 오면 `claude -p`로 새 헤드리스 세션을 그 자리에서
+  띄워서 "깨운다". 이렇게 시작된 세션도 위의 일회성 훅들을 그대로 태우므로,
+  이후 흐름(승인/자동허용/완료알림)은 데몬과 무관하게 기존과 동일하게 동작한다.
+  **수동 실행**이며 자동 시작(부팅 시 자동 등록)은 지원하지 않는다.
+- 훅들과 데몬은 `~/.claude/claude-approver-state.json`의 `daemon` 객체
+  (`busyUntil`/`waitingUntil`/`waitingSessionId`/`lastCwd`/`lastSessionId`)로
+  "지금 PC가 뭘 하고 있는지"를 공유한다 — 데몬이 이미 대기 중인 세션과
+  겹쳐서 새 세션을 띄우지 않게 하는 근거.
+- 페어링은 무작위 문자열(`ca-xxxx...`) 하나로, `<code>-ask` / `<code>-reply` /
+  `<code>-settings` / `<code>-prompt` 네 개의 ntfy 토픽을 유도해서 사용.
+  인증서버 없음, ntfy.sh는 완전 무료/공개.
 
 ## 파일 구조
 
@@ -47,21 +64,26 @@ ntfy.sh(무료 중계 서비스)로 구성.
 claude-approver/
   hook/
     permission-relay.js       PreToolUse 훅 — 승인/거부 중계 + 항상허용 기억 + PC전용 처리
-                               + 자동 허용 모드(평범한 요청 즉시 자동 허용)
+                               + 자동 허용 모드(평범한 요청 즉시 자동 허용) + busy/lastCwd 마킹
     task-complete-notify.js   Stop 훅 — 작업 완료 알림 + 사용량 스냅샷 + 폰 입력 대기
+                               + waiting/busy/lastCwd 마킹(state.daemon)
     stop-failure-notify.js    StopFailure 훅 — API 오류(한도 등)로 턴이 끊겼을 때 알림
     attention-notify.js       Notification 훅 — 컴퓨터 확인 필요 알림 (권한 요청 제외하고 필터링)
-    notify-common.js          Stop/StopFailure/Notification 훅 공통 유틸 (설정 조회/상태 파일 포함)
+    notify-common.js          훅 공통 유틸 (설정 조회/상태 파일 + truncateForNtfy + daemon 상태 헬퍼)
+    daemon.js                 상시 실행 데몬(v1.11~) — 유휴 상태일 때 폰 지시로 헤드리스 세션 깨움
     usage.js                  ~/.claude/projects/**/*.jsonl 파싱해 토큰 사용량 집계
     setup.js                  설정 스크립트 (재실행해도 안전 — 기존 훅 지우고 재등록)
   android/                    Kotlin/Gradle 프로젝트
     debug.keystore             고정 서명 키 (재생성 금지 — 하면 기존 설치와 업데이트 호환 깨짐)
     app/src/main/java/com/claudeapprover/
       service/RelayService.kt        foreground service, 알림 표시, 20초 조용한 정정창(undo) 로직
+                                      + 데몬 하트비트 폴링(v1.11)
       service/ResponseHelper.kt      허용/거부 응답을 실제로 ntfy에 전송하는 공통 로직
-      ui/MainActivity.kt             페어링 입력, 최근 요청 목록, 인앱 승인/거부
+      ui/MainActivity.kt             상태/다음 지시/최근 요청(전체보기 다이얼로그 포함), 설정 진입
+      ui/SettingsActivity.kt         페어링 코드/사용량("평소 대비" 게이지) — v1.11에서 분리
       data/Prefs.kt, RequestItem.kt  로컬 저장 (SharedPreferences)
-      net/NtfyClient.kt              ntfy.sh publish/streaming GET
+      net/NtfyClient.kt              ntfy.sh publish/streaming GET/최신값 폴링
+  specs/phone-remote-control/       v1.11 요구사항/설계/작업목록 (스펙 드리븐)
   .github/workflows/build-apk.yml   GitHub Actions로 APK 빌드 (android-actions/setup-android
                                      + gradle/actions/setup-gradle, gradle wrapper 없음)
   README.md                   사용자용 설치/사용 설명서
@@ -148,6 +170,9 @@ claude-approver/
   (4) 앱 아이콘 교체. 자세한 내용은 아래 "v1.9에서 바뀐 것" 절 참고.
 - **v1.10**: "평소 대비" 게이지 추가 — 사용자가 "토큰(활동량)이 얼마인지
   직관적으로 알고 싶다"고 요청. 자세한 내용은 아래 "v1.10에서 바뀐 것" 절 참고.
+- **v1.11**: (1) 알림/최근 요청 전체 내용을 앱 안에서 잘림 없이 보기, (2) PC가
+  쉬고 있을 때도 폰 지시로 새 세션을 깨우는 상시 데몬 추가, (3) 페어링
+  코드/사용량을 설정 화면으로 분리. 자세한 내용은 아래 "v1.11에서 바뀐 것" 절 참고.
 - **v1.8**: 자동 허용 모드가 켜져 있으면 승인 요청 알림 자체를 아예 안 띄우고
   즉시 판단하도록 재설계 — v1.6~v1.7 방식은 모드를 켜놔도 매번 승인 요청
   알림이 뜨고 170초를 기다려야 자동 허용됐는데, "왜 계속 승인 요청이 오냐"는
@@ -275,6 +300,116 @@ Stop 시점에 트랜스크립트 파일에 마지막 메시지가 아직 없을
   M3 전용 위젯을 잘못 써서 튕긴 전례가 있어서, 이번엔 테마 호환성 문제가
   아예 없는 플랫폼 위젯으로 골랐다.
 
+## v1.11에서 바뀐 것 (상세)
+
+사용자가 "스펙 드리븐"으로 진행해 달라고 요청해서, 코드를 건드리기 전에
+`specs/phone-remote-control/{requirements,design,tasks}.md`를 먼저 작성했다 —
+앞으로 이 라운드를 더 손볼 일이 있으면 거기부터 볼 것.
+
+### 1. 알림/최근 요청 전체 내용 인앱 열람
+
+- "최근 요청" 목록은 여전히 3줄 미리보기지만, **항목을 탭하면** 전체 제목/
+  본문(스크롤 + 텍스트 선택 가능)/도구/작업폴더/시각을 보여주는 다이얼로그가
+  뜬다(`MainActivity.showDetailDialog`/`showFullTextDialog`).
+- 가장 최근 "작업 완료" 알림의 전체 본문도 상태 카드의 "전체 보기"로 볼 수
+  있다 — `Prefs.lastStatusTitle`/`lastStatusBody`에 저장해뒀다가 씀.
+- PC 훅이 보내는 본문 길이를 늘렸다(`notify-common.js`의 `truncateForNtfy`,
+  ntfy 메시지 크기 한도 안에서 최대한 길게, 실제로 잘렸을 때만 "…(내용이
+  길어 일부 생략됨)" 표시). Stop 완료 알림 300자→1500자, PreToolUse 기본
+  요약 500자→1500자, StopFailure 상세 300자→1500자.
+
+### 2. 상시 데몬 — PC가 쉬고 있을 때도 폰 지시로 깨우기
+
+가장 큰 변경. "폰 입력 모드"는 Claude Code가 **한 턴을 막 끝낸 순간에만**
+최대 9분 폰 입력을 기다리는 일회성 프로세스에 의존하는데, 그 창 밖에 보낸
+지시나 애초에 세션이 안 돌고 있을 때 보낸 지시는 받아줄 프로세스가 없어서
+그냥 버려진다는 게 문제였다("밖에서도 클로드 코드를 폰으로 쓰고 싶다"는
+요청). `hook/daemon.js`를 새로 만들어 해결:
+
+- **상시 실행 프로세스**(기존 훅들과 달리 계속 떠 있음)가 `<code>-prompt`
+  토픽을 항상 구독한다. 재연결 규율은 안드로이드 `RelayService.streamLoop`를
+  그대로 참고했다 — **읽기 타임아웃을 반드시 유한값(90초)으로 설정**(v1.9에서
+  겪었던 "무한 타임아웃이라 죽은 연결을 못 알아챔" 버그를 새 코드에서부터
+  피함), 마지막으로 본 이벤트 시각부터 재연결, 메시지 id 중복 제거,
+  지수 백오프.
+- 지시가 오면 `~/.claude/claude-approver-state.json`의 `daemon` 객체를
+  확인해서 판단한다:
+  1. `waitingUntil`이 안 지났으면(=이미 살아있는 Stop 훅이 대기 중) 아무것도
+     안 함 — 그 훅이 알아서 받는다(중복 실행 방지).
+  2. `busyUntil`이 안 지났으면(=한창 작업 중) "지금 작업 중이라 못 받았어요"
+     attention 알림만 보내고 끝. **큐잉은 이번 범위에 없음** — 사용자가
+     나중에 다시 보내야 한다.
+  3. `remoteInputMode`(폰 입력 모드)가 꺼져 있으면 "모드가 꺼져 있어
+     전달되지 않았다" attention 알림. **이 스위치가 켜져 있을 때만 데몬이
+     새 세션을 시작한다** — 안전장치로 의도한 설계.
+  4. 셋 다 아니면(진짜 유휴 + 모드 켜짐) `daemon.lastCwd`(없으면 홈 디렉터리)
+     에서 `claude -p "<지시>" --continue`를 자식 프로세스로 띄운다.
+     `--continue`가 실패하면(그 폴더에 이전 대화가 없는 경우 등) 이유를
+     따지지 않고 **한 번만** `--continue` 없이 재시도한다(무한 재시도 없음).
+- `busyUntil`/`waitingUntil`/`lastCwd`는 기존 훅들이 채운다:
+  `permission-relay.js`는 도구가 호출될 때마다(`touchBusy`), `task-complete-notify.js`
+  는 `waitForPrompt`로 들어갈 때/나올 때(`waitingUntil`) 그리고 턴이 완전히
+  끝날 때(`busyUntil=0`), `stop-failure-notify.js`는 오류 종료 시
+  둘 다 0으로. **동시성 주의**: `task-complete-notify.js`는 `state` 객체를
+  들고 최대 9분 `await`하므로, 이 파일 안에서는 `notify-common.js`의
+  자동 load+save 헬퍼(자기 파일을 따로 열고 닫음)를 쓰지 않고 **이미 들고
+  있는 `state` 객체를 직접 수정**한다 — 안 그러면 대기 중 다른 곳에서 상태
+  파일이 바뀌었을 때 서로 덮어쓰는 경합이 생긴다. `permission-relay.js`/
+  `stop-failure-notify.js`는 그런 장기 대기가 없어서 자동 헬퍼를 그대로 씀.
+- 데몬은 60초마다 `<code>-settings` 토픽에 `{daemonAlive:true, updatedAt}`
+  하트비트를 publish한다. 앱은 `RelayService`에서 60초 간격으로 이 값을
+  폴링해서(`NtfyClient.fetchLatestFieldsContaining`) `Prefs.daemonAliveAt`에
+  저장하고, 150초 안에 갱신 안 되면 "꺼짐"으로 판단(`Prefs.isDaemonAlive`).
+  "다음 지시 보내기" 카드에 지금 보내면 무슨 일이 일어나는지(바로 이어짐/
+  새로 깨어남/전달 안 됨) 안내 문구로 표시.
+- **수동 실행**(`node hook/daemon.js`)만 지원. 자동 시작(윈도우 시작프로그램
+  등록 등)은 사용자가 명시적으로 "일단 수동 시작만"을 선택해서 이번 범위에
+  넣지 않았다 — 나중에 요청 오면 추가.
+
+### 3. 설정 화면 분리
+
+- 새 `SettingsActivity` — 페어링 코드 입력/연결 버튼과 사용량("오늘"/"현재
+  블록"/"평소 대비" 게이지) 카드를 메인 화면에서 옮겨왔다. 로직은 그대로
+  복사해서 옮김(억지로 공용 유틸로 뽑지 않음 — 두 화면이 각자 독립적으로
+  갖고 있는 게 이 규모에서는 더 단순함).
+- 메인 화면엔 상태 카드/다음 지시 보내기/자동허용·폰입력 스위치/최근 요청만
+  남고, 오른쪽 위 톱니바퀴 아이콘으로 설정 화면에 들어간다. 페어링 안 된
+  상태면 배너로 설정 화면을 안내.
+
+## v1.11에서 실제로 검증한 것 / 못 한 것
+
+명령을 직접 실행해서 확인한 것:
+
+- `node --check`로 변경된 훅 파일 전부(`notify-common.js`,
+  `permission-relay.js`, `task-complete-notify.js`, `stop-failure-notify.js`,
+  `daemon.js`) 문법 통과.
+- **데몬의 ntfy 스트리밍 연결/구독 자체는 실제로 검증했다** — 격리된 테스트
+  페어링 코드로 `~/.claude/claude-approver.json`/`claude-approver-state.json`을
+  잠깐 바꿔치기하고(테스트 후 원본 백업에서 복구) `node hook/daemon.js`를
+  띄워 ntfy 프롬프트 토픽에 정상 연결되는 것 확인.
+- MainActivity/SettingsActivity의 바인딩 id가 레이아웃 XML의 id와 전부
+  일치하는지, 참조하는 `@string`이 전부 `strings.xml`에 정의돼 있는지
+  grep으로 교차 확인함(안드로이드 SDK가 없어 실제 컴파일은 못 함 — 기존과
+  동일한 제약).
+
+**확인하지 못한 것 (중요, 다음에 이어서 볼 사람은 꼭 읽을 것)**:
+
+- **`claude -p`/`claude -p --continue`를 이 개발 환경에서 직접 실행하는
+  테스트가 안 됐다** — 이미 Claude Code 세션 안에서(중첩 호출) 실행하면
+  아무 출력 없이 그냥 행업된다(`timeout 30`으로 강제 종료해도 마찬가지).
+  그래서 `spawnHeadless`의 `--continue` 실패 시 폴백 로직은 **정확한 에러
+  문구를 확인하지 못한 채** 작성했다 — 문구 매칭 대신 "`--continue`가 뭐가
+  됐든 0이 아닌 코드로 끝나면 이유를 안 따지고 한 번만 `--continue` 없이
+  재시도"로 단순하게 짰다(무한 재시도는 없음). **사용자가 실제 PC에서
+  데몬을 켜고 폰으로 지시를 보내 이 경로가 실제로 동작하는지 한 번은
+  확인해봐야 한다.**
+- 데몬의 busy/waiting 판단 로직(`state.daemon`)도 실제 동시 세션 상황에서
+  끝까지 검증하지 못했다 — 코드 리뷰 수준으로만 확인.
+- 안드로이드 쪽(설정 화면 분리, 전체보기 다이얼로그, 데몬 상태 표시줄)은
+  실기기 테스트를 못 했다(로컬에 SDK 없음, 기존과 동일한 제약) — 배포 후
+  실제 폰에서 한 번 훑어봐 주시면 좋음. 특히 톱니바퀴 아이콘, 설정 화면
+  진입/뒤로가기, 다이얼로그가 시스템 다크/라이트 테마에서 잘 보이는지.
+
 ## 알림 종류 (앱 내부 `type` 필드 기준)
 
 | type | 상황 | 알림 | 버튼 | 히스토리 기록 |
@@ -351,7 +486,29 @@ Stop 시점에 트랜스크립트 파일에 마지막 메시지가 아직 없을
     기록이 쌓일 때까지 게이지가 "데이터 쌓는 중"으로만 뜬다.
   - 기준선(평균/최댓값)은 PC 한 대에 로컬로 저장되므로, 같은 사람이 여러
     PC에서 Claude Code를 쓰면 PC마다 기준이 따로 쌓인다(공유 안 됨).
+- v1.11(데몬) 관련 한계 — `specs/phone-remote-control/requirements.md`의
+  "비범위" 절에도 정리해둠:
+  - **PC가 작업 중일 때 보낸 지시는 큐에 안 담긴다** — "못 받았다" 알림만
+    오고 사용자가 다시 보내야 한다. 나중에 요청 오면 큐잉을 추가할 수 있음.
+  - **데몬은 수동 시작**이라 컴퓨터를 껐다 켜면 다시 `node hook/daemon.js`를
+    실행해야 한다. 자동 시작(윈도우 시작프로그램 등록 등)은 사용자가
+    "일단 수동 시작만"으로 선택해서 이번엔 안 넣었다.
+  - `busyUntil` 연장(6분)은 훅 호출 시점 기준 휴리스틱이라, 도구 호출
+    사이 텀이 그보다 길면 데몬이 "유휴"로 착각해 세션을 겹쳐 시작할
+    이론적 여지가 있다. 사람이 인터랙티브 터미널을 열어두고 훅이 한 번도
+    안 도는 채로(응답만 받고 다음 입력을 안 친 채) 방치하는 경우도 데몬이
+    감지할 방법이 없다 — 폰 입력 모드를 켠 폴더에서는 이런 방치를 피하는
+    게 사용자 책임.
+  - 데몬이 어느 폴더에서 새 세션을 시작할지는 `daemon.lastCwd`(가장 최근에
+    훅이 본 작업 폴더) 하나뿐이다. 여러 프로젝트를 오가며 쓰는 사람은
+    의도와 다른 폴더에서 깨어날 수 있음 — 폰에서 직접 폴더를 고르는 UI는
+    이번 범위 밖.
+  - `spawnHeadless`의 `--continue` 실패 폴백은 실제 에러 문구를 확인 못 한
+    채 작성됨(위 "v1.11에서 실제로 검증한 것/못 한 것" 참고) — 실사용 중
+    이상하게 동작하면 여기부터 의심할 것.
 - 사용자가 원하면 추가할 수 있는 것들(요청받은 적은 없음, 아이디어 수준):
   - 앱 안에 버전 표시(현재는 안드로이드 시스템 설정에서만 확인 가능)
   - 항상허용 목록을 앱에서 직접 보고 지울 수 있는 화면 (현재는 PC에서 파일
     직접 삭제해야 함)
+  - 데몬 자동 시작 등록, PC 작업 중일 때 지시 큐잉, 폰에서 시작 폴더 직접
+    선택 — 전부 v1.11에서 의도적으로 범위 밖으로 뺀 것들.

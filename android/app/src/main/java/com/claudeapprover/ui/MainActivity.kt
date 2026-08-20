@@ -1,21 +1,13 @@
 package com.claudeapprover.ui
 
-import android.Manifest
 import android.content.BroadcastReceiver
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-import android.content.pm.PackageManager
-import android.os.Build
 import android.os.Bundle
-import android.os.PowerManager
-import android.provider.Settings
 import android.view.LayoutInflater
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.claudeapprover.R
 import com.claudeapprover.data.ClaudeState
@@ -37,10 +29,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private lateinit var prefs: Prefs
 
-    private val notifPermissionLauncher = registerForActivityResult(
-        androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
-    ) { granted -> if (granted) startMonitoring() else startMonitoring() }
-
     private val historyUpdatedReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             renderHistory()
@@ -59,11 +47,11 @@ class MainActivity : AppCompatActivity() {
         setContentView(binding.root)
         prefs = Prefs(this)
 
-        binding.pairingCodeInput.setText(prefs.pairingCode)
-        binding.connectButton.setOnClickListener { onConnectClicked() }
-        binding.pairingCodeInput.setOnLongClickListener {
-            copyCode()
-            true
+        binding.settingsButton.setOnClickListener {
+            startActivity(Intent(this, SettingsActivity::class.java))
+        }
+        binding.pairingBannerButton.setOnClickListener {
+            startActivity(Intent(this, SettingsActivity::class.java))
         }
 
         binding.autoApproveSwitch.isChecked = prefs.autoApproveEnabled
@@ -79,6 +67,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         binding.promptSendButton.setOnClickListener { sendPrompt() }
+        binding.viewFullStatusText.setOnClickListener { showStatusDetailDialog() }
 
         updateStatusUi()
         renderStateAndUsage()
@@ -103,53 +92,6 @@ class MainActivity : AppCompatActivity() {
         renderHistory()
     }
 
-    private fun onConnectClicked() {
-        if (prefs.monitoringEnabled) {
-            stopMonitoring()
-            return
-        }
-        val code = binding.pairingCodeInput.text.toString().trim()
-        if (code.isBlank()) {
-            Toast.makeText(this, getString(R.string.pairing_code_hint), Toast.LENGTH_SHORT).show()
-            return
-        }
-        prefs.pairingCode = code
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            ActivityCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        ) {
-            notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-            return
-        }
-        startMonitoring()
-    }
-
-    private fun startMonitoring() {
-        prefs.monitoringEnabled = true
-        ContextCompat.startForegroundService(this, Intent(this, RelayService::class.java))
-        updateStatusUi()
-        requestBatteryOptimizationExemption()
-    }
-
-    private fun stopMonitoring() {
-        startService(Intent(this, RelayService::class.java).apply { action = RelayService.ACTION_STOP })
-        prefs.monitoringEnabled = false
-        updateStatusUi()
-    }
-
-    private fun requestBatteryOptimizationExemption() {
-        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
-        if (!pm.isIgnoringBatteryOptimizations(packageName)) {
-            try {
-                startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                    data = android.net.Uri.parse("package:$packageName")
-                })
-            } catch (e: Exception) {
-                // 일부 기기에는 이 화면이 없을 수 있음 — 무시
-            }
-        }
-    }
-
     // PC 훅은 자기 혼자 계속 켜져 있는 게 아니라 매번 새로 실행되기 때문에, 폰이
     // 바꾼 설정을 알려면 ntfy의 settingsTopic에서 최신 값을 읽어야 한다. 여기서는
     // 그 값을 publish만 해두면 되고(스트리밍 서비스가 없어도 앱 안에서 바로 전송
@@ -168,8 +110,9 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // 입력창에서 보낸 지시. PC가 마침 기다리는 중이면 바로 이어지고, 아니면
-    // ntfy 캐시에 남아 있다가 다음번에 기다리기 시작할 때 전달된다.
+    // 입력창에서 보낸 지시. PC가 마침 기다리는 중이면 바로 이어지고, 유휴 상태에서
+    // 데몬이 켜져 있으면 새로 깨워서 시작하고, 둘 다 아니면 ntfy 캐시에 남아 있다가
+    // 다음번에 기다리기 시작할 때 전달된다.
     private fun sendPrompt() {
         val text = binding.promptInput.text.toString().trim()
         if (text.isEmpty()) {
@@ -189,26 +132,17 @@ class MainActivity : AppCompatActivity() {
         Toast.makeText(this, getString(R.string.prompt_sent), Toast.LENGTH_SHORT).show()
     }
 
-    private fun copyCode() {
-        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        clipboard.setPrimaryClip(ClipData.newPlainText("pairing_code", binding.pairingCodeInput.text.toString()))
-        Toast.makeText(this, getString(R.string.code_copied), Toast.LENGTH_SHORT).show()
-    }
-
     private fun updateStatusUi() {
         binding.statusText.text = if (prefs.monitoringEnabled) {
             getString(R.string.status_connected)
         } else {
             getString(R.string.status_disconnected)
         }
-        binding.connectButton.text = if (prefs.monitoringEnabled) {
-            getString(R.string.disconnect_button)
-        } else {
-            getString(R.string.connect_button)
-        }
+        binding.pairingBanner.visibility =
+            if (prefs.pairingCode.isBlank()) android.view.View.VISIBLE else android.view.View.GONE
     }
 
-    // ---- Claude 상태 / 사용량 ----
+    // ---- Claude 상태 / 다음 지시 카드 ----
 
     private fun renderStateAndUsage() {
         val (label, color) = when (prefs.claudeState) {
@@ -243,123 +177,64 @@ class MainActivity : AppCompatActivity() {
         binding.promptWaitingText.setTextColor(
             ContextCompat.getColor(this, if (prefs.isAwaitingPrompt) R.color.brand_accent else R.color.text_secondary)
         )
+        renderDaemonStatus()
 
-        binding.usageText.text = formatUsage(prefs.usageJson)
-        binding.usageDisclaimer.visibility =
-            if (prefs.usageJson.isEmpty()) android.view.View.GONE else android.view.View.VISIBLE
-        renderBaseline(prefs.usageJson)
+        binding.viewFullStatusText.visibility =
+            if (prefs.lastStatusBody.isNotEmpty()) android.view.View.VISIBLE else android.view.View.GONE
     }
 
-    // "평소 대비" 게이지 — 실제 구독 한도가 아니라 이 폰이 쌓아온 이 컴퓨터의
-    // 기록(최근 평균/최대치) 대비 값이다. 훅 쪽에서 표본이 부족하면
-    // (최소 3일 · 3블록) null로 보내므로, 그 경우 "데이터 쌓는 중"으로 표시한다.
-    private fun renderBaseline(usageJson: String) {
-        var todayPct: Int? = null
-        var blockPct: Int? = null
-        if (usageJson.isNotEmpty()) {
-            try {
-                val baseline = JSONObject(usageJson).optJSONObject("baseline")
-                if (baseline != null) {
-                    if (!baseline.isNull("dailyAveragePct")) todayPct = baseline.optInt("dailyAveragePct")
-                    if (!baseline.isNull("blockMaxPct")) blockPct = baseline.optInt("blockMaxPct")
-                }
-            } catch (e: Exception) {
-                // 파싱 실패 시 그냥 "데이터 쌓는 중"으로 보여준다
+    // 데몬(상시 원격 실행 프로그램)이 살아있는지에 따라 "지금 지시를 보내면
+    // 무슨 일이 일어나는지"를 안내한다 — isAwaitingPrompt가 우선.
+    private fun renderDaemonStatus() {
+        val text: String
+        val colorRes: Int
+        when {
+            prefs.isAwaitingPrompt -> return // promptWaitingText가 이미 안내함, 중복 표시 안 함
+            prefs.isDaemonAlive -> {
+                text = getString(R.string.daemon_status_alive_idle)
+                colorRes = R.color.brand_accent
+            }
+            else -> {
+                text = getString(R.string.daemon_status_offline)
+                colorRes = R.color.text_secondary
             }
         }
-        applyGauge(binding.todayBaselinePctText, binding.todayBaselineBar, todayPct)
-        applyGauge(binding.blockBaselinePctText, binding.blockBaselineBar, blockPct)
+        binding.daemonStatusText.text = text
+        binding.daemonStatusText.setTextColor(ContextCompat.getColor(this, colorRes))
     }
 
-    private fun applyGauge(pctText: android.widget.TextView, bar: android.widget.ProgressBar, pct: Int?) {
-        if (pct == null) {
-            pctText.text = getString(R.string.baseline_collecting)
-            pctText.setTextColor(ContextCompat.getColor(this, R.color.text_secondary))
-            bar.progress = 0
-            bar.progressTintList = ContextCompat.getColorStateList(this, R.color.text_secondary)
-            return
+    // ---- 알림 전체 내용 보기 ----
+
+    // 알림/목록에서는 잘려 보이던 내용을 잘림 없이 볼 수 있게 하는 공용 다이얼로그.
+    private fun showFullTextDialog(title: String, body: String) {
+        val scroll = android.widget.ScrollView(this)
+        val text = android.widget.TextView(this).apply {
+            setText(body)
+            setTextIsSelectable(true)
+            textSize = 14f
+            setPadding(48, 24, 48, 24)
         }
-        val color = when {
-            pct >= 130 -> R.color.brand_warning
-            pct >= 100 -> R.color.brand_primary
-            else -> R.color.brand_accent
-        }
-        pctText.text = getString(R.string.baseline_pct_format, pct)
-        pctText.setTextColor(ContextCompat.getColor(this, color))
-        bar.progress = pct.coerceIn(0, 100)
-        bar.progressTintList = ContextCompat.getColorStateList(this, color)
+        scroll.addView(text)
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle(title)
+            .setView(scroll)
+            .setPositiveButton(getString(R.string.detail_dialog_close), null)
+            .show()
     }
 
-    private fun formatUsage(json: String): String {
-        if (json.isEmpty()) return getString(R.string.usage_never)
-        return try {
-            val root = JSONObject(json)
-            val lines = mutableListOf<String>()
-
-            root.optJSONObject("today")?.let { today ->
-                lines.add(
-                    "오늘 · 응답 ${today.optLong("messages")}회 · " +
-                        "출력 ${compact(today.optLong("output"))} · " +
-                        "입력 ${compact(today.optLong("input") + today.optLong("cacheWrite") + today.optLong("cacheRead"))}"
-                )
-            }
-
-            val block = root.optJSONObject("block")
-            if (block != null) {
-                val totals = block.optJSONObject("totals")
-                val endsAt = block.optLong("endsAt")
-                val remain = endsAt - System.currentTimeMillis()
-                lines.add(
-                    "현재 5시간 구간 (${clock(block.optLong("startedAt"))}~${clock(endsAt)}" +
-                        (if (remain > 0) ", ${duration(remain)} 남음" else "") + ")"
-                )
-                if (totals != null) {
-                    lines.add(
-                        "   응답 ${totals.optLong("messages")}회 · 출력 ${compact(totals.optLong("output"))}"
-                    )
-                }
-            } else {
-                lines.add("현재 5시간 구간: 진행 중인 사용 없음")
-            }
-
-            root.optJSONObject("byModel")?.let { byModel ->
-                val parts = byModel.keys().asSequence().map { key ->
-                    "${modelLabel(key)} ${byModel.getJSONObject(key).optLong("messages")}회"
-                }.toList()
-                if (parts.isNotEmpty()) lines.add("모델별 · " + parts.joinToString(" / "))
-            }
-
-            val updatedAt = root.optLong("updatedAt")
-            if (updatedAt > 0L) lines.add("기준 시각 · ${relativeTime(updatedAt)}")
-
-            lines.joinToString("\n")
-        } catch (e: Exception) {
-            getString(R.string.usage_never)
-        }
+    private fun showStatusDetailDialog() {
+        if (prefs.lastStatusBody.isEmpty()) return
+        showFullTextDialog(prefs.lastStatusTitle.ifEmpty { "작업 완료" }, prefs.lastStatusBody)
     }
 
-    private fun modelLabel(raw: String): String = when {
-        raw.contains("opus") -> "Opus"
-        raw.contains("sonnet") -> "Sonnet"
-        raw.contains("haiku") -> "Haiku"
-        raw.contains("fable") -> "Fable"
-        else -> raw
-    }
-
-    private fun compact(tokens: Long): String = when {
-        tokens >= 1_000_000 -> String.format(Locale.KOREA, "%.1fM", tokens / 1_000_000.0)
-        tokens >= 1_000 -> String.format(Locale.KOREA, "%.1fK", tokens / 1_000.0)
-        else -> tokens.toString()
-    }
-
-    private fun clock(epochMs: Long): String =
-        SimpleDateFormat("HH:mm", Locale.KOREA).format(Date(epochMs))
-
-    private fun duration(ms: Long): String {
-        val minutes = ms / 60_000
-        val h = minutes / 60
-        val m = minutes % 60
-        return if (h > 0) "${h}시간 ${m}분" else "${m}분"
+    private fun showDetailDialog(item: RequestItem) {
+        val meta = getString(
+            R.string.detail_dialog_meta_format,
+            item.tool.ifEmpty { "-" },
+            item.cwd?.ifEmpty { "-" } ?: "-",
+            SimpleDateFormat("M월 d일 HH:mm", Locale.KOREA).format(Date(item.timestamp))
+        )
+        showFullTextDialog(item.title, "${item.body}\n\n$meta")
     }
 
     private fun relativeTime(epochMs: Long): String {
@@ -384,6 +259,7 @@ class MainActivity : AppCompatActivity() {
         items.forEach { item ->
             val itemBinding = ItemHistoryBinding.inflate(inflater, binding.historyContainer, false)
             itemBinding.root.tag = item.id
+            itemBinding.root.setOnClickListener { showDetailDialog(item) }
             itemBinding.itemTitle.text = item.title
             itemBinding.itemBody.text = item.body
             itemBinding.itemStatus.text = statusLabel(item)

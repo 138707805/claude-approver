@@ -10,6 +10,7 @@ const path = require("path");
 
 const CONFIG_PATH = path.join(os.homedir(), ".claude", "claude-approver.json");
 const ALLOWLIST_PATH = path.join(os.homedir(), ".claude", "claude-approver-allowlist.json");
+const STATE_PATH = path.join(os.homedir(), ".claude", "claude-approver-state.json");
 const NTFY_HOST = "ntfy.sh";
 const DEFAULT_TIMEOUT_SEC = 170; // settings.json 쪽 hook timeout(180s)보다 약간 짧게
 
@@ -71,6 +72,43 @@ function loadConfig() {
   } catch {
     return null; // 설정 안 된 상태 → 훅이 아무 것도 안 하고 평소처럼 동작
   }
+}
+
+// 데몬(hook/daemon.js)과 공유하는 "지금 PC가 뭘 하고 있는지" 상태.
+// notify-common.js의 동일 함수 복사본(이 파일은 승인 응답을 기다려야 해서
+// 별도로 자기 코드를 갖고 있다).
+function loadState() {
+  try {
+    return JSON.parse(fs.readFileSync(STATE_PATH, "utf8"));
+  } catch {
+    return { sessions: {} };
+  }
+}
+
+function saveState(state) {
+  try {
+    fs.writeFileSync(STATE_PATH, JSON.stringify(state));
+  } catch {
+    // 저장 실패는 치명적이지 않음
+  }
+}
+
+// 도구가 호출됐다는 것 자체가 "지금 한창 작업 중"이라는 신호 — 데몬이 이
+// 창 안에는 새 세션을 겹쳐 시작하지 않는다.
+function touchBusy(minutes = 6) {
+  const state = loadState();
+  state.daemon = state.daemon || {};
+  state.daemon.busyUntil = Date.now() + minutes * 60000;
+  saveState(state);
+}
+
+// 데몬이 다음에 콜드 스타트할 때 어느 폴더에서 시작할지 판단하는 근거.
+function touchLastCwd(cwd) {
+  if (!cwd) return;
+  const state = loadState();
+  state.daemon = state.daemon || {};
+  state.daemon.lastCwd = cwd;
+  saveState(state);
 }
 
 function postJson(topic, payload) {
@@ -223,13 +261,27 @@ function persistAutoApproveSetting(value) {
   }
 }
 
+// ntfy 메시지 크기 한도를 넘지 않는 선에서 최대한 길게 보여주기 위한 자르기.
+// 실제로 자른 경우에만 표시를 붙인다 — notify-common.js의 동일 함수 복사본
+// (이 파일은 승인 응답을 기다려야 해서 별도로 자기 코드를 갖고 있다).
+function truncateForNtfy(text, max) {
+  const s = String(text || "");
+  if (Buffer.byteLength(s, "utf8") <= max) return s;
+  let cut = s.slice(0, max);
+  while (Buffer.byteLength(cut, "utf8") > max) cut = cut.slice(0, -1);
+  return cut + "\n\n…(내용이 길어 일부 생략됨)";
+}
+
 function summarize(toolName, toolInput) {
   const input = toolInput || {};
   switch (toolName) {
     case "Bash":
       return {
         title: "터미널 명령 승인 요청",
-        body: input.description ? `${input.description}\n\n${input.command}` : String(input.command || ""),
+        body: truncateForNtfy(
+          input.description ? `${input.description}\n\n${input.command}` : String(input.command || ""),
+          3000
+        ),
       };
     case "Write":
       return { title: "파일 쓰기 승인 요청", body: `파일: ${input.file_path || "(알 수 없음)"}` };
@@ -238,7 +290,7 @@ function summarize(toolName, toolInput) {
     default:
       return {
         title: `${toolName} 실행 승인 요청`,
-        body: JSON.stringify(input).slice(0, 500),
+        body: truncateForNtfy(JSON.stringify(input), 1500),
       };
   }
 }
@@ -326,6 +378,10 @@ async function main() {
   const toolUseId = payload.tool_use_id || `${Date.now()}`;
   const { title, body } = summarize(toolName, payload.tool_input);
   const signature = signatureFor(toolName, payload.tool_input);
+
+  // 도구가 호출됐다는 것 자체가 "지금 PC가 작업 중"이라는 신호다.
+  touchBusy();
+  touchLastCwd(payload.cwd);
 
   // 계획 승인처럼 폰에서 맹목적으로 허용/거부하면 안 되는 도구는
   // 결정은 터미널에 맡기고, 앱에는 "확인이 필요하다"는 것만 알려준다.

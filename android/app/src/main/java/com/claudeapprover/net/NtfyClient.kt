@@ -53,4 +53,38 @@ object NtfyClient {
             .build()
         return streamingClient.newCall(request)
     }
+
+    // 토픽에 캐시된 메시지들 중, 주어진 필드를 담고 있는 메시지의 가장 최근
+    // 값만 골라 하나로 합쳐 돌려준다. 이 토픽엔 여러 종류의 메시지(자동허용
+    // 스위치, 폰입력 스위치, 데몬 하트비트 등)가 섞여 쌓이므로, 문자 그대로
+    // "가장 최근 메시지 1개"가 아니라 필드별로 최근 값을 찾아야 한다 — PC 훅의
+    // fetchLatestSettings와 동일한 패턴.
+    fun fetchLatestFieldsContaining(topic: String, requiredKey: String): String? {
+        return try {
+            val request = Request.Builder()
+                .url("$NTFY_BASE/$topic/json?poll=1&since=all")
+                .get()
+                .build()
+            shortClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return null
+                val lines = response.body?.string()?.lines() ?: return null
+                var latest: String? = null
+                for (line in lines) {
+                    val trimmed = line.trim()
+                    if (trimmed.isEmpty()) continue
+                    try {
+                        val envelope = org.json.JSONObject(trimmed)
+                        if (envelope.optString("event") != "message" || !envelope.has("message")) continue
+                        val message = envelope.getString("message")
+                        if (org.json.JSONObject(message).has(requiredKey)) latest = message
+                    } catch (e: Exception) {
+                        // 무시하고 다음 줄 계속
+                    }
+                }
+                latest
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
 }

@@ -19,6 +19,13 @@ private const val KEY_STATE_AT = "claude_state_at"
 private const val KEY_STATE_CWD = "claude_state_cwd"
 private const val KEY_AWAITING_SESSION = "awaiting_session_id"
 private const val KEY_AWAITING_UNTIL = "awaiting_until"
+private const val KEY_LAST_STATUS_TITLE = "last_status_title"
+private const val KEY_LAST_STATUS_BODY = "last_status_body"
+private const val KEY_DAEMON_ALIVE_AT = "daemon_alive_at"
+
+// 데몬 하트비트 간격(60초)보다 넉넉히 여유를 둔 값 — 이 시간 안에 하트비트가
+// 안 갱신되면 "꺼짐"으로 판단한다.
+private const val DAEMON_ALIVE_GRACE_MS = 150_000L
 private const val MAX_HISTORY = 30
 
 // 재연결할 때 놓친 메시지를 다시 받으면서 같은 걸 두 번 처리하지 않으려고
@@ -113,6 +120,23 @@ class Prefs(context: Context) {
         set(value) = sp.edit().putLong(KEY_AWAITING_UNTIL, value).apply()
 
     val isAwaitingPrompt: Boolean get() = System.currentTimeMillis() < awaitingUntil
+
+    // 가장 최근 "작업 완료" 알림의 전체 제목/본문 — 상태 카드의 "전체 보기"에서 쓴다.
+    var lastStatusTitle: String
+        get() = sp.getString(KEY_LAST_STATUS_TITLE, "") ?: ""
+        set(value) = sp.edit().putString(KEY_LAST_STATUS_TITLE, value).apply()
+
+    var lastStatusBody: String
+        get() = sp.getString(KEY_LAST_STATUS_BODY, "") ?: ""
+        set(value) = sp.edit().putString(KEY_LAST_STATUS_BODY, value).apply()
+
+    // PC에서 상시 실행 중인 데몬(hook/daemon.js)이 보내는 하트비트 시각.
+    // 데몬은 유휴 상태일 때 폰이 보낸 지시를 새 세션으로 "깨워서" 실행해준다.
+    var daemonAliveAt: Long
+        get() = sp.getLong(KEY_DAEMON_ALIVE_AT, 0L)
+        set(value) = sp.edit().putLong(KEY_DAEMON_ALIVE_AT, value).apply()
+
+    val isDaemonAlive: Boolean get() = System.currentTimeMillis() - daemonAliveAt < DAEMON_ALIVE_GRACE_MS
 
     fun loadHistory(): List<RequestItem> {
         val raw = sp.getString(KEY_HISTORY, "[]") ?: "[]"

@@ -8,7 +8,17 @@
 // StopFailure에는 결정 권한이 없다(출력이 무시됨). 알림만 보내고 조용히 끝낸다.
 "use strict";
 
-const { loadConfig, topicFor, readStdin, postJson, loadState, saveState } = require("./notify-common");
+const {
+  loadConfig,
+  topicFor,
+  readStdin,
+  postJson,
+  loadState,
+  saveState,
+  truncateForNtfy,
+  clearBusy,
+  clearWaiting,
+} = require("./notify-common");
 const usage = require("./usage");
 
 // 오류 종류를 사람이 읽을 수 있는 문장으로. 모르는 값이 오면 원문을 그대로 보여준다.
@@ -59,12 +69,17 @@ async function main() {
     id: `fail-${Date.now()}`,
     type: "attention",
     title: `작업이 중단됐어요 — ${label}`,
-    body: detail ? `${hint}\n\n${detail.slice(0, 300)}` : hint,
+    body: detail ? `${hint}\n\n${truncateForNtfy(detail, 1500)}` : hint,
     cwd: payload.cwd,
     sessionId: payload.session_id || "",
     errorType,
     usage: snapshot,
   });
+
+  // 오류로 턴이 끝났으니 이 프로세스도 곧 종료된다 — 데몬 입장에서 "쉬는 중"
+  // 으로 되돌린다(Stop 훅이 정상 종료될 때와 동일한 처리).
+  clearBusy();
+  clearWaiting();
 
   // 오류로 끝났으면 폰 입력 연속 카운트도 의미가 없으니 정리한다.
   const sessionId = payload.session_id;
