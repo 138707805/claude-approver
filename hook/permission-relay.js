@@ -398,15 +398,9 @@ async function main() {
   }
 
   if (loadAllowlist().includes(signature)) {
-    // 자동 승인도 조용히 넘어가지 않고 "이미 처리됐다"는 걸 폰에 남긴다.
-    await postJson(config.askTopic, {
-      id: toolUseId,
-      type: "info",
-      tool: toolName,
-      title,
-      body,
-      cwd: payload.cwd,
-    });
+    // 자동 승인 항목은 ntfy로 보내지 않는다 — 알림도 안 뜨는 항목이라 폰 기록
+    // 가치보다 ntfy.sh 무료 하루 발송 한도 소모가 더 문제였음(2026-08-25 확인:
+    // 하루 한도 초과로 정작 필요한 승인 요청/완료 알림까지 막혔던 사고).
     console.log(
       JSON.stringify({
         hookSpecificOutput: {
@@ -441,14 +435,7 @@ async function main() {
       return; // 결정 없음 → 평소처럼 터미널에서 처리
     }
 
-    await postJson(config.askTopic, {
-      id: toolUseId,
-      type: "info",
-      tool: toolName,
-      title,
-      body,
-      cwd: payload.cwd,
-    });
+    // 자동 승인 항목은 ntfy로 보내지 않는다 — 위 allowlist 분기와 같은 이유.
     console.log(
       JSON.stringify({
         hookSpecificOutput: {
