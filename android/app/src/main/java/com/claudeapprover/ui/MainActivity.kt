@@ -16,10 +16,8 @@ import com.claudeapprover.data.RequestItem
 import com.claudeapprover.data.RequestStatus
 import com.claudeapprover.databinding.ActivityMainBinding
 import com.claudeapprover.databinding.ItemHistoryBinding
-import com.claudeapprover.net.NtfyClient
 import com.claudeapprover.net.WolWebClient
 import com.claudeapprover.service.RelayService
-import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -55,18 +53,6 @@ class MainActivity : AppCompatActivity() {
             startActivity(Intent(this, SettingsActivity::class.java))
         }
 
-        binding.autoApproveSwitch.isChecked = prefs.autoApproveEnabled
-        binding.autoApproveSwitch.setOnCheckedChangeListener { _, isChecked ->
-            prefs.autoApproveEnabled = isChecked
-            publishSettings()
-        }
-
-        binding.remoteInputSwitch.isChecked = prefs.remoteInputEnabled
-        binding.remoteInputSwitch.setOnCheckedChangeListener { _, isChecked ->
-            prefs.remoteInputEnabled = isChecked
-            publishSettings()
-        }
-
         binding.promptSendButton.setOnClickListener { sendPrompt() }
         binding.viewFullStatusText.setOnClickListener { showStatusDetailDialog() }
         binding.wakeOnLanButton.setOnClickListener { wakeOnLan() }
@@ -97,23 +83,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     // PC 훅은 자기 혼자 계속 켜져 있는 게 아니라 매번 새로 실행되기 때문에, 폰이
-    // 바꾼 설정을 알려면 ntfy의 settingsTopic에서 최신 값을 읽어야 한다. 여기서는
-    // 그 값을 publish만 해두면 되고(스트리밍 서비스가 없어도 앱 안에서 바로 전송
-    // 가능하도록 백그라운드 스레드에서 처리), PC 쪽이 요청이 들어올 때마다 가져간다.
-    private fun publishSettings() {
-        if (prefs.pairingCode.isBlank()) return
-        val topic = prefs.settingsTopic
-        val auto = prefs.autoApproveEnabled
-        val remote = prefs.remoteInputEnabled
-        thread {
-            val body = JSONObject()
-                .put("autoApproveMode", auto)
-                .put("remoteInputMode", remote)
-                .toString()
-            NtfyClient.publish(topic, body)
-        }
-    }
-
     // 입력창에서 보낸 지시. PC가 마침 기다리는 중이면 바로 이어지고, 유휴 상태에서
     // 데몬이 켜져 있으면 새로 깨워서 시작하고, 둘 다 아니면 ntfy 캐시에 남아 있다가
     // 다음번에 기다리기 시작할 때 전달된다.

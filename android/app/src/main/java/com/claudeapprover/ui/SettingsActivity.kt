@@ -19,6 +19,7 @@ import androidx.core.content.ContextCompat
 import com.claudeapprover.R
 import com.claudeapprover.data.Prefs
 import com.claudeapprover.databinding.ActivitySettingsBinding
+import com.claudeapprover.net.NtfyClient
 import com.claudeapprover.net.WolWebClient
 import com.claudeapprover.service.RelayService
 import org.json.JSONObject
@@ -58,6 +59,18 @@ class SettingsActivity : AppCompatActivity() {
         binding.pairingCodeInput.setOnLongClickListener {
             copyCode()
             true
+        }
+
+        binding.autoApproveSwitch.isChecked = prefs.autoApproveEnabled
+        binding.autoApproveSwitch.setOnCheckedChangeListener { _, isChecked ->
+            prefs.autoApproveEnabled = isChecked
+            publishSettings()
+        }
+
+        binding.remoteInputSwitch.isChecked = prefs.remoteInputEnabled
+        binding.remoteInputSwitch.setOnCheckedChangeListener { _, isChecked ->
+            prefs.remoteInputEnabled = isChecked
+            publishSettings()
         }
 
         binding.wolHostInput.setText(prefs.wolHost)
@@ -130,6 +143,24 @@ class SettingsActivity : AppCompatActivity() {
             } catch (e: Exception) {
                 // 일부 기기에는 이 화면이 없을 수 있음 — 무시
             }
+        }
+    }
+
+    // PC 훅은 자기 혼자 계속 켜져 있는 게 아니라 매번 새로 실행되기 때문에, 폰이
+    // 바꾼 설정을 알려면 ntfy의 settingsTopic에서 최신 값을 읽어야 한다. 여기서는
+    // 그 값을 publish만 해두면 되고(스트리밍 서비스가 없어도 앱 안에서 바로 전송
+    // 가능하도록 백그라운드 스레드에서 처리), PC 쪽이 요청이 들어올 때마다 가져간다.
+    private fun publishSettings() {
+        if (prefs.pairingCode.isBlank()) return
+        val topic = prefs.settingsTopic
+        val auto = prefs.autoApproveEnabled
+        val remote = prefs.remoteInputEnabled
+        thread {
+            val body = JSONObject()
+                .put("autoApproveMode", auto)
+                .put("remoteInputMode", remote)
+                .toString()
+            NtfyClient.publish(topic, body)
         }
     }
 
