@@ -17,6 +17,7 @@ import com.claudeapprover.data.RequestStatus
 import com.claudeapprover.databinding.ActivityMainBinding
 import com.claudeapprover.databinding.ItemHistoryBinding
 import com.claudeapprover.net.NtfyClient
+import com.claudeapprover.net.WolSender
 import com.claudeapprover.service.RelayService
 import org.json.JSONObject
 import java.text.SimpleDateFormat
@@ -68,6 +69,7 @@ class MainActivity : AppCompatActivity() {
 
         binding.promptSendButton.setOnClickListener { sendPrompt() }
         binding.viewFullStatusText.setOnClickListener { showStatusDetailDialog() }
+        binding.wakeOnLanButton.setOnClickListener { wakeOnLan() }
 
         updateStatusUi()
         renderStateAndUsage()
@@ -130,6 +132,31 @@ class MainActivity : AppCompatActivity() {
         })
         binding.promptInput.setText("")
         Toast.makeText(this, getString(R.string.prompt_sent), Toast.LENGTH_SHORT).show()
+    }
+
+    // 완전히 꺼진 PC는 ntfy를 듣고 있지 않으므로, 공유기까지 직접 매직 패킷을 쏜다.
+    // 주소/MAC이 아직 설정 안 됐으면 보내봐야 아무 데도 안 가니 설정 화면으로 보낸다.
+    private fun wakeOnLan() {
+        if (!prefs.isWolConfigured) {
+            Toast.makeText(this, getString(R.string.wol_not_configured), Toast.LENGTH_SHORT).show()
+            startActivity(Intent(this, SettingsActivity::class.java))
+            return
+        }
+        val host = prefs.wolHost
+        val port = prefs.wolPort.toIntOrNull() ?: 9
+        val mac = prefs.wolMac
+        Toast.makeText(this, getString(R.string.wol_sending), Toast.LENGTH_SHORT).show()
+        thread {
+            val result = WolSender.send(host, port, mac)
+            runOnUiThread {
+                result.fold(
+                    onSuccess = { Toast.makeText(this, getString(R.string.wol_sent_ok), Toast.LENGTH_SHORT).show() },
+                    onFailure = { e ->
+                        Toast.makeText(this, getString(R.string.wol_sent_fail, e.message ?: ""), Toast.LENGTH_LONG).show()
+                    }
+                )
+            }
+        }
     }
 
     private fun updateStatusUi() {

@@ -22,6 +22,14 @@ private const val KEY_AWAITING_UNTIL = "awaiting_until"
 private const val KEY_LAST_STATUS_TITLE = "last_status_title"
 private const val KEY_LAST_STATUS_BODY = "last_status_body"
 private const val KEY_DAEMON_ALIVE_AT = "daemon_alive_at"
+private const val KEY_WOL_HOST = "wol_host"
+private const val KEY_WOL_PORT = "wol_port"
+private const val KEY_WOL_MAC = "wol_mac_address"
+
+// 이 앱이 붙는 PC의 와이파이 어댑터 MAC 주소(2026-08-31 확인) — 기본값으로만 쓰고,
+// PC를 바꾸거나 랜카드가 바뀌면 설정 화면에서 직접 고쳐야 한다.
+private const val DEFAULT_WOL_MAC = "E0:2E:0B:DB:72:2F"
+private const val DEFAULT_WOL_PORT = "9"
 
 // 데몬 하트비트 간격(60초)보다 넉넉히 여유를 둔 값 — 이 시간 안에 하트비트가
 // 안 갱신되면 "꺼짐"으로 판단한다.
@@ -137,6 +145,24 @@ class Prefs(context: Context) {
         set(value) = sp.edit().putLong(KEY_DAEMON_ALIVE_AT, value).apply()
 
     val isDaemonAlive: Boolean get() = System.currentTimeMillis() - daemonAliveAt < DAEMON_ALIVE_GRACE_MS
+
+    // ---- PC 원격 켜기 (Wake-on-LAN) ----
+    // 완전히 꺼진 PC까지는 ntfy로 못 닿으므로(PC가 아무것도 안 듣고 있음), 별도로
+    // 공유기까지 직접 매직 패킷을 쏘는 경로가 필요해서 데몬 관련 설정과 분리해뒀다.
+
+    var wolHost: String
+        get() = sp.getString(KEY_WOL_HOST, "") ?: ""
+        set(value) = sp.edit().putString(KEY_WOL_HOST, value.trim()).apply()
+
+    var wolPort: String
+        get() = sp.getString(KEY_WOL_PORT, DEFAULT_WOL_PORT) ?: DEFAULT_WOL_PORT
+        set(value) = sp.edit().putString(KEY_WOL_PORT, value.trim()).apply()
+
+    var wolMac: String
+        get() = sp.getString(KEY_WOL_MAC, DEFAULT_WOL_MAC) ?: DEFAULT_WOL_MAC
+        set(value) = sp.edit().putString(KEY_WOL_MAC, value.trim()).apply()
+
+    val isWolConfigured: Boolean get() = wolHost.isNotBlank() && wolMac.isNotBlank()
 
     fun loadHistory(): List<RequestItem> {
         val raw = sp.getString(KEY_HISTORY, "[]") ?: "[]"

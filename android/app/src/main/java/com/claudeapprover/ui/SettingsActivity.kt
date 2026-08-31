@@ -19,11 +19,13 @@ import androidx.core.content.ContextCompat
 import com.claudeapprover.R
 import com.claudeapprover.data.Prefs
 import com.claudeapprover.databinding.ActivitySettingsBinding
+import com.claudeapprover.net.WolSender
 import com.claudeapprover.service.RelayService
 import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.concurrent.thread
 
 // 페어링 코드 연결/해제와 사용량("평소 대비" 게이지 포함) 표시 — 메인 화면에서
 // 자주 안 만지는 두 카드만 여기로 옮겨왔다. 감시 시작/중지 로직 자체는 원래
@@ -57,6 +59,12 @@ class SettingsActivity : AppCompatActivity() {
             copyCode()
             true
         }
+
+        binding.wolHostInput.setText(prefs.wolHost)
+        binding.wolPortInput.setText(prefs.wolPort)
+        binding.wolMacInput.setText(prefs.wolMac)
+        binding.wolSaveButton.setOnClickListener { saveWolSettings(showToast = true) }
+        binding.wolTestButton.setOnClickListener { testWakeOnLan() }
 
         updateStatusUi()
         renderUsage()
@@ -122,6 +130,49 @@ class SettingsActivity : AppCompatActivity() {
                 })
             } catch (e: Exception) {
                 // 일부 기기에는 이 화면이 없을 수 있음 — 무시
+            }
+        }
+    }
+
+    // ---- PC 원격 켜기 (Wake-on-LAN) ----
+
+    // 입력값을 저장만 하고 유효성은 보지 않는다 — "지금 켜보기"를 눌렀을 때만
+    // 실제로 형식이 맞는지 확인해서, 저장 자체는 항상 되게 해둔다(입력 중간 상태도
+    // 저장돼야 앱을 나갔다 와도 값이 안 날아간다).
+    private fun saveWolSettings(showToast: Boolean): Boolean {
+        val host = binding.wolHostInput.text.toString().trim()
+        val port = binding.wolPortInput.text.toString().trim().ifBlank { "9" }
+        val mac = binding.wolMacInput.text.toString().trim()
+        prefs.wolHost = host
+        prefs.wolPort = port
+        prefs.wolMac = mac
+        if (showToast) Toast.makeText(this, getString(R.string.wol_saved), Toast.LENGTH_SHORT).show()
+        return true
+    }
+
+    private fun testWakeOnLan() {
+        saveWolSettings(showToast = false)
+        val host = prefs.wolHost
+        if (host.isBlank()) {
+            Toast.makeText(this, getString(R.string.wol_host_empty), Toast.LENGTH_SHORT).show()
+            return
+        }
+        val port = prefs.wolPort.toIntOrNull() ?: 9
+        val mac = prefs.wolMac
+        binding.wolResultText.visibility = android.view.View.VISIBLE
+        binding.wolResultText.text = getString(R.string.wol_sending)
+        thread {
+            val result = WolSender.send(host, port, mac)
+            runOnUiThread {
+                result.fold(
+                    onSuccess = { binding.wolResultText.text = getString(R.string.wol_sent_ok) },
+                    onFailure = { e ->
+                        binding.wolResultText.text = getString(
+                            R.string.wol_sent_fail,
+                            e.message ?: getString(R.string.wol_invalid_mac)
+                        )
+                    }
+                )
             }
         }
     }
