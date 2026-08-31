@@ -31,6 +31,7 @@ private const val KEY_WOL_PASSWORD = "wol_password"
 private const val WOL_USERNAME = "wol"
 private const val WOL_PORT = 8079
 private const val WOL_MAC_INDEX = 0
+private const val WOL_MAC = "E0:2E:0B:DB:72:2F"
 
 // 데몬 하트비트 간격(60초)보다 넉넉히 여유를 둔 값 — 이 시간 안에 하트비트가
 // 안 갱신되면 "꺼짐"으로 판단한다.
@@ -163,6 +164,7 @@ class Prefs(context: Context) {
     val wolUsername: String get() = WOL_USERNAME
     val wolPort: Int get() = WOL_PORT
     val wolMacIndex: Int get() = WOL_MAC_INDEX
+    val wolMac: String get() = WOL_MAC
 
     val isWolConfigured: Boolean get() = wolHost.isNotBlank() && wolPassword.isNotBlank()
 

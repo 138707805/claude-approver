@@ -32,18 +32,7 @@ object WolWebClient {
     fun wake(host: String, port: Int, username: String, password: String, macIndex: Int = 0): Result<Unit> {
         return try {
             val base = "http://$host:$port"
-            val uuid = UUID.randomUUID().toString()
-            val cookie = "PRVN0UWNJCW=$uuid"
-
-            val tmp = "id=${urlEncode(encryptHex(username))}" +
-                "&passwd=${urlEncode(encryptHex(password))}" +
-                "&uuid=$uuid"
-            val data = Base64.encodeToString(tmp.toByteArray(Charsets.ISO_8859_1), Base64.NO_WRAP)
-
-            val loginResp = postForm("$base/boaform/login", "data=${urlEncode(data)}", cookie)
-            if (!loginResp.contains("code_succ_login")) {
-                return Result.failure(Exception("로그인 실패 (아이디/비밀번호를 확인하세요): $loginResp"))
-            }
+            val cookie = login(base, username, password)
 
             val bootResp = postForm("$base/boaform/special_wol", "common_action=boot&common_query=$macIndex,", cookie)
             if (!bootResp.contains("code_succ")) {
@@ -53,6 +42,43 @@ object WolWebClient {
         } catch (e: Exception) {
             Result.failure(e)
         }
+    }
+
+    /**
+     * PC가 지금 와이파이에 붙어있는지(=켜져 있거나 최소한 절전 중에도 응답 가능한
+     * 상태인지) 확인한다. 공유기의 WOL 페이지가 "현재 연결된 기기 목록"을 이미
+     * `localhosts` 라는 이름으로 내려주고 있어서, 그 안에 이 MAC이 있는지만 보면
+     * 된다 — WOL 등록 목록(`entry_list`)에는 항상 있으므로 그것과 헷갈리면 안 된다.
+     */
+    fun checkOnline(host: String, port: Int, username: String, password: String, mac: String): Result<Boolean> {
+        return try {
+            val base = "http://$host:$port"
+            val cookie = login(base, username, password)
+
+            val homeHtml = getPage("$base/basic_home.html", cookie)
+            val localhostsBlock = Regex("var localhosts\\s*=\\s*\\[(.*?)];", RegexOption.DOT_MATCHES_ALL)
+                .find(homeHtml)?.groupValues?.get(1) ?: ""
+            Result.success(localhostsBlock.contains(mac, ignoreCase = true))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /** 로그인하고 세션으로 쓸 쿠키 문자열을 반환한다. 실패하면 예외를 던진다. */
+    private fun login(base: String, username: String, password: String): String {
+        val uuid = UUID.randomUUID().toString()
+        val cookie = "PRVN0UWNJCW=$uuid"
+
+        val tmp = "id=${urlEncode(encryptHex(username))}" +
+            "&passwd=${urlEncode(encryptHex(password))}" +
+            "&uuid=$uuid"
+        val data = Base64.encodeToString(tmp.toByteArray(Charsets.ISO_8859_1), Base64.NO_WRAP)
+
+        val loginResp = postForm("$base/boaform/login", "data=${urlEncode(data)}", cookie)
+        if (!loginResp.contains("code_succ_login")) {
+            throw Exception("로그인 실패 (아이디/비밀번호를 확인하세요): $loginResp")
+        }
+        return cookie
     }
 
     private fun encryptHex(plain: String): String {
@@ -76,6 +102,20 @@ object WolWebClient {
             conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded")
             conn.setRequestProperty("Cookie", cookie)
             conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+            val stream = if (conn.responseCode in 200..299) conn.inputStream else conn.errorStream
+            return stream.bufferedReader().use { it.readText() }
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    private fun getPage(urlStr: String, cookie: String): String {
+        val conn = URL(urlStr).openConnection() as HttpURLConnection
+        try {
+            conn.requestMethod = "GET"
+            conn.connectTimeout = TIMEOUT_MS
+            conn.readTimeout = TIMEOUT_MS
+            conn.setRequestProperty("Cookie", cookie)
             val stream = if (conn.responseCode in 200..299) conn.inputStream else conn.errorStream
             return stream.bufferedReader().use { it.readText() }
         } finally {

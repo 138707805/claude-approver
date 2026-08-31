@@ -38,6 +38,17 @@
     <string name="prompt_empty">보낼 내용을 입력해주세요</string>
     <string name="prompt_sent">지시를 보냈어요</string>
 
+    <!-- 컴퓨터 상태 -->
+    <string name="pc_card_title">컴퓨터</string>
+    <string name="pc_status_unknown">확인 안 함</string>
+    <string name="pc_status_checking">확인 중…</string>
+    <string name="pc_status_online">켜져 있음</string>
+    <string name="pc_status_offline">꺼져 있음</string>
+    <string name="pc_status_error">확인 실패</string>
+    <string name="pc_status_refresh_desc">지금 상태 다시 확인</string>
+    <string name="pc_status_not_configured">설정에서 주소/비밀번호를 넣으면 상태를 확인할 수 있어요</string>
+    <string name="pc_status_checked_at">%1$s 기준</string>
+
     <!-- 상태 / 사용량 -->
     <string name="state_card_title">Claude 상태</string>
     <string name="usage_card_title">사용량</string>

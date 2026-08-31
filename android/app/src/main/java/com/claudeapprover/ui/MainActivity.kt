@@ -70,6 +70,7 @@ class MainActivity : AppCompatActivity() {
         binding.promptSendButton.setOnClickListener { sendPrompt() }
         binding.viewFullStatusText.setOnClickListener { showStatusDetailDialog() }
         binding.wakeOnLanButton.setOnClickListener { wakeOnLan() }
+        binding.pcStatusRefreshButton.setOnClickListener { checkPcStatus() }
 
         updateStatusUi()
         renderStateAndUsage()
@@ -92,6 +93,7 @@ class MainActivity : AppCompatActivity() {
         updateStatusUi()
         renderStateAndUsage()
         renderHistory()
+        checkPcStatus()
     }
 
     // PC 훅은 자기 혼자 계속 켜져 있는 게 아니라 매번 새로 실행되기 때문에, 폰이
@@ -151,6 +153,44 @@ class MainActivity : AppCompatActivity() {
                     onSuccess = { Toast.makeText(this, getString(R.string.wol_sent_ok), Toast.LENGTH_SHORT).show() },
                     onFailure = { e ->
                         Toast.makeText(this, getString(R.string.wol_sent_fail, e.message ?: ""), Toast.LENGTH_LONG).show()
+                    }
+                )
+            }
+        }
+    }
+
+    // 공유기의 "현재 연결된 기기 목록"에 이 PC의 MAC이 있는지로 켜짐/꺼짐을
+    // 판단한다. WOL 등록 목록과는 다른 목록이라 혼동하지 않게 서버 쪽에서
+    // 구분해서 내려준다 — WolWebClient.checkOnline 참고.
+    private fun checkPcStatus() {
+        if (!prefs.isWolConfigured) {
+            binding.pcStatusBadge.text = getString(R.string.pc_status_unknown)
+            binding.pcStatusBadge.setTextColor(ContextCompat.getColor(this, R.color.text_secondary))
+            binding.pcStatusDetail.text = getString(R.string.pc_status_not_configured)
+            return
+        }
+        binding.pcStatusBadge.text = getString(R.string.pc_status_checking)
+        binding.pcStatusBadge.setTextColor(ContextCompat.getColor(this, R.color.text_secondary))
+        binding.pcStatusDetail.text = ""
+        val host = prefs.wolHost
+        thread {
+            val result = WolWebClient.checkOnline(host, prefs.wolPort, prefs.wolUsername, prefs.wolPassword, prefs.wolMac)
+            runOnUiThread {
+                val now = relativeTime(System.currentTimeMillis())
+                result.fold(
+                    onSuccess = { online ->
+                        binding.pcStatusBadge.text = getString(
+                            if (online) R.string.pc_status_online else R.string.pc_status_offline
+                        )
+                        binding.pcStatusBadge.setTextColor(
+                            ContextCompat.getColor(this, if (online) R.color.brand_accent else R.color.text_secondary)
+                        )
+                        binding.pcStatusDetail.text = getString(R.string.pc_status_checked_at, now)
+                    },
+                    onFailure = { e ->
+                        binding.pcStatusBadge.text = getString(R.string.pc_status_error)
+                        binding.pcStatusBadge.setTextColor(ContextCompat.getColor(this, R.color.brand_warning))
+                        binding.pcStatusDetail.text = e.message ?: getString(R.string.wol_unknown_error)
                     }
                 )
             }
