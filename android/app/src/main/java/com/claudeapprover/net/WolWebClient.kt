@@ -29,28 +29,30 @@ object WolWebClient {
     private const val IV_STR = "SKBB-abcd-543210"
     private const val TIMEOUT_MS = 8000
 
-    fun wake(host: String, port: Int, username: String, password: String, macIndex: Int = 0): Result<Unit> = try {
-        val base = "http://$host:$port"
-        val uuid = UUID.randomUUID().toString()
-        val cookie = "PRVN0UWNJCW=$uuid"
+    fun wake(host: String, port: Int, username: String, password: String, macIndex: Int = 0): Result<Unit> {
+        return try {
+            val base = "http://$host:$port"
+            val uuid = UUID.randomUUID().toString()
+            val cookie = "PRVN0UWNJCW=$uuid"
 
-        val tmp = "id=${urlEncode(encryptHex(username))}" +
-            "&passwd=${urlEncode(encryptHex(password))}" +
-            "&uuid=$uuid"
-        val data = Base64.encodeToString(tmp.toByteArray(Charsets.ISO_8859_1), Base64.NO_WRAP)
+            val tmp = "id=${urlEncode(encryptHex(username))}" +
+                "&passwd=${urlEncode(encryptHex(password))}" +
+                "&uuid=$uuid"
+            val data = Base64.encodeToString(tmp.toByteArray(Charsets.ISO_8859_1), Base64.NO_WRAP)
 
-        val loginResp = postForm("$base/boaform/login", "data=${urlEncode(data)}", cookie)
-        if (!loginResp.contains("code_succ_login")) {
-            return Result.failure(Exception("로그인 실패 (아이디/비밀번호를 확인하세요): $loginResp"))
+            val loginResp = postForm("$base/boaform/login", "data=${urlEncode(data)}", cookie)
+            if (!loginResp.contains("code_succ_login")) {
+                return Result.failure(Exception("로그인 실패 (아이디/비밀번호를 확인하세요): $loginResp"))
+            }
+
+            val bootResp = postForm("$base/boaform/special_wol", "common_action=boot&common_query=$macIndex,", cookie)
+            if (!bootResp.contains("code_succ")) {
+                return Result.failure(Exception("켜기 요청 실패: $bootResp"))
+            }
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
         }
-
-        val bootResp = postForm("$base/boaform/special_wol", "common_action=boot&common_query=$macIndex,", cookie)
-        if (!bootResp.contains("code_succ")) {
-            return Result.failure(Exception("켜기 요청 실패: $bootResp"))
-        }
-        Result.success(Unit)
-    } catch (e: Exception) {
-        Result.failure(e)
     }
 
     private fun encryptHex(plain: String): String {
