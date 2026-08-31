@@ -19,7 +19,7 @@ import androidx.core.content.ContextCompat
 import com.claudeapprover.R
 import com.claudeapprover.data.Prefs
 import com.claudeapprover.databinding.ActivitySettingsBinding
-import com.claudeapprover.net.WolSender
+import com.claudeapprover.net.WolWebClient
 import com.claudeapprover.service.RelayService
 import org.json.JSONObject
 import java.text.SimpleDateFormat
@@ -61,8 +61,7 @@ class SettingsActivity : AppCompatActivity() {
         }
 
         binding.wolHostInput.setText(prefs.wolHost)
-        binding.wolPortInput.setText(prefs.wolPort)
-        binding.wolMacInput.setText(prefs.wolMac)
+        binding.wolPasswordInput.setText(prefs.wolPassword)
         binding.wolSaveButton.setOnClickListener { saveWolSettings(showToast = true) }
         binding.wolTestButton.setOnClickListener { testWakeOnLan() }
 
@@ -141,11 +140,9 @@ class SettingsActivity : AppCompatActivity() {
     // 저장돼야 앱을 나갔다 와도 값이 안 날아간다).
     private fun saveWolSettings(showToast: Boolean): Boolean {
         val host = binding.wolHostInput.text.toString().trim()
-        val port = binding.wolPortInput.text.toString().trim().ifBlank { "9" }
-        val mac = binding.wolMacInput.text.toString().trim()
+        val password = binding.wolPasswordInput.text.toString()
         prefs.wolHost = host
-        prefs.wolPort = port
-        prefs.wolMac = mac
+        prefs.wolPassword = password
         if (showToast) Toast.makeText(this, getString(R.string.wol_saved), Toast.LENGTH_SHORT).show()
         return true
     }
@@ -157,19 +154,17 @@ class SettingsActivity : AppCompatActivity() {
             Toast.makeText(this, getString(R.string.wol_host_empty), Toast.LENGTH_SHORT).show()
             return
         }
-        val port = prefs.wolPort.toIntOrNull() ?: 9
-        val mac = prefs.wolMac
         binding.wolResultText.visibility = android.view.View.VISIBLE
         binding.wolResultText.text = getString(R.string.wol_sending)
         thread {
-            val result = WolSender.send(host, port, mac)
+            val result = WolWebClient.wake(host, prefs.wolPort, prefs.wolUsername, prefs.wolPassword, prefs.wolMacIndex)
             runOnUiThread {
                 result.fold(
                     onSuccess = { binding.wolResultText.text = getString(R.string.wol_sent_ok) },
                     onFailure = { e ->
                         binding.wolResultText.text = getString(
                             R.string.wol_sent_fail,
-                            e.message ?: getString(R.string.wol_invalid_mac)
+                            e.message ?: getString(R.string.wol_unknown_error)
                         )
                     }
                 )

@@ -17,7 +17,7 @@ import com.claudeapprover.data.RequestStatus
 import com.claudeapprover.databinding.ActivityMainBinding
 import com.claudeapprover.databinding.ItemHistoryBinding
 import com.claudeapprover.net.NtfyClient
-import com.claudeapprover.net.WolSender
+import com.claudeapprover.net.WolWebClient
 import com.claudeapprover.service.RelayService
 import org.json.JSONObject
 import java.text.SimpleDateFormat
@@ -143,11 +143,9 @@ class MainActivity : AppCompatActivity() {
             return
         }
         val host = prefs.wolHost
-        val port = prefs.wolPort.toIntOrNull() ?: 9
-        val mac = prefs.wolMac
         Toast.makeText(this, getString(R.string.wol_sending), Toast.LENGTH_SHORT).show()
         thread {
-            val result = WolSender.send(host, port, mac)
+            val result = WolWebClient.wake(host, prefs.wolPort, prefs.wolUsername, prefs.wolPassword, prefs.wolMacIndex)
             runOnUiThread {
                 result.fold(
                     onSuccess = { Toast.makeText(this, getString(R.string.wol_sent_ok), Toast.LENGTH_SHORT).show() },

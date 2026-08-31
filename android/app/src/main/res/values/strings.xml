@@ -68,20 +68,18 @@
     <!-- PC 원격 켜기 (Wake-on-LAN) -->
     <string name="wake_on_lan_button">PC 켜기</string>
     <string name="wol_not_configured">설정에서 PC 켜기 주소를 먼저 입력해주세요</string>
-    <string name="wol_sending">매직 패킷을 보내는 중…</string>
+    <string name="wol_sending">공유기에 켜기 신호를 보내는 중…</string>
     <string name="wol_sent_ok">보냈어요. PC가 켜지기까지 잠시 걸릴 수 있어요</string>
     <string name="wol_sent_fail">전송 실패: %1$s</string>
+    <string name="wol_unknown_error">알 수 없는 오류</string>
     <string name="wol_card_title">PC 원격 켜기 (Wake-on-LAN)</string>
-    <string name="wol_card_description">PC가 꺼져 있을 때 여기 적어둔 주소로 깨우기 신호를 보내요. 공유기에서 이 포트를 PC의 개별 IP가 아니라 브로드캐스트 주소(예: 192.168.0.255)로 포워딩해야 완전히 꺼진 상태에서도 켜집니다.</string>
+    <string name="wol_card_description">공유기(SK브로드밴드 GW-HF611R)에 내장된 WOL 기능을 그대로 사용해요. 공유기 관리자 페이지 &gt; 특수기능 &gt; WOL에서 이 기능을 켜고, 이 노트북의 MAC 주소를 등록하고, 비밀번호를 정한 뒤 그 값을 여기 입력하세요.</string>
     <string name="wol_host_label">주소 (공유기 DDNS 또는 공인 IP)</string>
     <string name="wol_host_hint">예: myhome.iptime.org</string>
-    <string name="wol_port_label">포트</string>
-    <string name="wol_port_hint">9</string>
-    <string name="wol_mac_label">PC 와이파이 MAC 주소</string>
-    <string name="wol_mac_hint">AA:BB:CC:DD:EE:FF</string>
+    <string name="wol_password_label">WOL 기능 비밀번호 (공유기에서 정한 것)</string>
+    <string name="wol_password_hint">공유기 WOL 페이지에서 설정한 비밀번호</string>
     <string name="wol_save_button">저장</string>
     <string name="wol_test_button">지금 켜보기</string>
     <string name="wol_saved">저장했어요</string>
-    <string name="wol_invalid_mac">MAC 주소 형식이 올바르지 않아요</string>
     <string name="wol_host_empty">주소를 입력해주세요</string>
 </resources>
