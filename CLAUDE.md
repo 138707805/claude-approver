@@ -9,9 +9,8 @@
 
 ## 개발 요청을 받으면: 자동 협업 루프
 
-사용자는 이 저장소의 모든 개발 요청에 대해 아래 루프를 미리 허락했다:
-작업 브랜치 push, draft PR 생성, PR에 `@codex review` 댓글, PR 활동 구독, 작업 브랜치로 `build-apk.yml` 수동 실행.
-병합·APK 릴리스·master push는 허락하지 않았다.
+개발 요청은 아래 루프로 진행한다. 루프에는 작업 브랜치 push, draft PR 생성, PR에 Codex 리뷰 요청 댓글,
+PR 활동 구독, 작업 브랜치로 `build-apk.yml` 수동 실행이 들어간다. 병합·배포(APK 릴리스)·master push는 하지 않는다.
 
 1. **최신화**: `git fetch origin`, `git status`(미커밋 변경 보존), 열린 PR과 그 변경 파일, `docs/plans/`, `STATUS.md` 확인.
    다른 PR이 같은 파일을 바꾸고 있으면 그 PR 위에 쌓거나(base = 그 브랜치) 사용자에게 묻는다.
