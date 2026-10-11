@@ -88,6 +88,8 @@ Codex가 독립 기능을 맡을 때는 방향이 반대다: Codex가 `codex/<�
 - Codex는 ChatGPT 계정 로그인으로 쓴다(Plus 구독에 포함된 사용량). OpenAI API 키는 발급하지도 쓰지도 않는다.
   API 키 로그인은 별도 종량 과금이다.
 - `~/.codex/auth.json`은 비밀번호와 같다. 저장소·채팅·환경 변수·로그에 넣지 않는다.
+- Codex 코드 리뷰에는 요금제별 사용 한도가 있다. 지적을 모아 고친 뒤 다시 요청하고, P2 이하만 고친 커밋은 다시 요청하지 않는다.
+  남은 한도는 [Codex 사용량](https://chatgpt.com/codex/cloud/settings/usage)에서 본다.
 - 이 저장소는 public이다. 페어링 코드, 공유기·DDNS 주소, WOL 비밀번호는 PR 설명·댓글·리뷰 답글에도 쓰지 않는다.
 
 ## 사용자 1회 설정
