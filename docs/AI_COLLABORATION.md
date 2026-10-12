@@ -69,7 +69,10 @@ Codex가 독립 기능을 맡을 때는 방향이 반대다: Codex가 `codex/<�
   `setup.js`는 자기가 있는 폴더의 훅을 등록하므로 worktree에서 실행하지 않는다.
 - **안드로이드 APK**: `master` push(PR 병합 포함)마다 `build-apk.yml`이 APK를 빌드해 Actions 아티팩트로 올린다.
   병합만으로 사용자 폰에 배포되지는 않는다. 릴리스는 사용자가 요청할 때만 만든다:
-  `dist/`를 비우고 `gh run download`로 새 아티팩트를 받는다 → `gh release create vX.Y` →
+  `dist/`를 비운다 → 병합 커밋의 `master` push 빌드 실행 ID를 찾는다
+  (`gh run list --workflow build-apk.yml --branch master --event push --commit <병합 SHA> --status success --json databaseId --jq '.[0].databaseId'`)
+  → 그 실행에서만 받는다(`gh run download <run-id> --dir dist`. 작업 브랜치 수동 실행도 같은 이름의 아티팩트를 만들기 때문)
+  → 받은 APK의 버전·크기·해시가 새 빌드인지 확인 → `gh release create vX.Y` →
   릴리스 링크로 직접 내려받아 md5가 빌드본과 같은지 확인 → 저장소가 public인지 확인 → 사용자에게 링크를 준다.
   주의점(예전 APK 재업로드 사고, 카카오톡 인앱 브라우저 다운로드 문제 등)은 [STATUS.md](../STATUS.md)의
   "알아두면 좋은 환경/운영 메모"에 있다.

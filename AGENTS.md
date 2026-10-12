@@ -53,7 +53,6 @@ cd android && gradle assembleDebug --no-daemon   # APK 빌드 (JDK 17, Android S
 ## 작업 규칙 (요약)
 
 - `master`에 직접 push·병합하지 않는다. 한 작업 = 한 브랜치 = 한 PR. Claude는 `claude/<주제>`, Codex는 `codex/<주제>`.
-  STATUS.md의 "커밋 후 push하면 GitHub Actions가 APK를 빌드한다"는 이제 작업 브랜치 push 뒤 `build-apk.yml` 수동 실행을 뜻한다.
 - 사용자 PC의 `~/claude-approver`는 실제 훅이 실행되는 폴더다. 거기서 브랜치를 바꾸지 말고 별도 worktree에서 작업한다.
 - 작업 전 `git fetch`로 최신 상태를 받는다. 열린 PR이 바꾸는 파일은 조율 없이 수정하지 않는다.
 - 다른 브랜치에 push·force-push·rebase 하지 않는다. 미커밋 변경을 덮어쓰지 않는다.
@@ -67,8 +66,10 @@ cd android && gradle assembleDebug --no-daemon   # APK 빌드 (JDK 17, Android S
 
 ## Code Review Rules
 
-- 오류·타임아웃·미설정 경로에서 `permissionDecision: "allow"`가 나가게 되거나, `remoteInputMode`가 꺼져 있는데
-  데몬이 세션을 시작하게 되면 P0. 안전한 경로: 결정을 출력하지 않고 끝내 터미널 승인으로 넘긴다.
+- 훅이 미설정(페어링 없음)이거나, 자동 허용이 꺼진 상태의 폰 승인 중계가 오류·타임아웃으로 끝났는데
+  `permissionDecision: "allow"`가 나가게 되거나, `remoteInputMode`가 꺼져 있는데 데몬이 세션을 시작하게 되면 P0.
+  안전한 경로: 결정을 출력하지 않고 끝내 터미널 승인으로 넘긴다. 설정 토픽 조회가 실패하면 로컬 `autoApproveMode`
+  (필드가 없으면 true)로 대체하는 것과, 자동 허용 모드가 위험하지 않은 요청을 허용하는 것은 의도된 동작이다(STATUS.md "자동 허용 모드").
 - `HIGH_RISK_*_PATTERNS`를 빼거나 좁히는 변경, "항상 허용" 기억의 일치 기준(Bash는 명령 전체, Write·Edit는 파일 경로)을
   넓히는 변경, `ExitPlanMode`를 폰 승인 대상으로 바꾸는 변경은 P1. 안전한 경로: 애매하면 "컴퓨터에서 확인" 알림으로 넘긴다.
 - 페어링 코드·토픽 이름, 공유기·DDNS 주소, WOL 비밀번호가 코드·문서·로그에 들어가면 P0. 토픽을 아는 사람은

@@ -25,10 +25,12 @@
    아래 `requirements.md`/`design.md`/`tasks.md`에 요구사항·설계·작업목록이
    있으니, v1.11을 더 손볼 일이 있으면 거기부터 볼 것.
 4. 코드를 바꿨으면 로컬에서 빌드할 수 없다(Java/Android SDK 없음) →
-   커밋 후 push하면 GitHub Actions가 APK를 빌드한다. 릴리스 절차는
+   작업 브랜치에 push한 뒤 `build-apk.yml`을 그 브랜치로 수동 실행(workflow_dispatch)해
+   APK 빌드를 확인한다(`master` push·PR 병합은 자동으로 빌드). 릴리스 절차는
    "환경/운영 메모" 절 참고.
-5. PC 쪽 훅 코드를 바꿨으면 `node hook/setup.js`를 다시 실행해야 반영된다
-   (여러 번 실행해도 안전).
+5. PC 쪽 훅 코드는 병합 뒤 `~/claude-approver`를 `git pull`하면 다음 훅 호출부터 반영된다
+   (등록된 훅이 그 폴더의 파일을 경로로 실행한다). 훅 등록(matcher·타임아웃·새 훅)을 바꿨을 때만
+   `node hook/setup.js`를 다시 실행한다(여러 번 실행해도 안전, 사용자 설정을 고치므로 사용자가 요청할 때만).
 
 ## 한 줄 요약
 
@@ -608,9 +610,11 @@ WOL 기능을 쓰려면 다음이 전제되어 있어야 한다(전부 완료됨
   로 되돌릴 것.
 - **카카오톡 인앱 브라우저로 GitHub 릴리스 링크를 열면 다운로드가 깨짐**
   (404 등) — 항상 "다른 브라우저로 열기"(Chrome 등)로 열라고 안내할 것.
-- 새 APK를 낼 때마다: `dist/` 폴더를 지우고 다시 `gh run download`로 받아서
-  (예전에 캐시된 파일을 실수로 재업로드한 적 있음 — 파일 크기/해시로 새
-  빌드인지 항상 확인) → `gh release create vX.Y ...`.
+- 새 APK를 낼 때마다: `dist/` 폴더를 지우고, 병합 커밋의 `master` push 빌드 실행 ID를 찾아
+  (`gh run list --workflow build-apk.yml --branch master --event push --commit <병합 SHA> --status success --json databaseId --jq '.[0].databaseId'`)
+  그 실행에서만 받는다(`gh run download <run-id> --dir dist`). 작업 브랜치 수동 실행도 같은 이름의
+  아티팩트를 만들므로 run ID 없이 받으면 다른 빌드가 섞일 수 있다(예전에 캐시된 파일을 실수로
+  재업로드한 적 있음 — 파일 크기/해시로 새 빌드인지 항상 확인) → `gh release create vX.Y ...`.
 - **`unzip`이 이 환경에 없다** — APK 내용을 확인할 때는 파이썬 `zipfile`을 쓸 것
   (`resources.arsc`에서 새 UI 문자열 grep, `AndroidManifest.xml`에서 버전 확인).
   릴리스 링크를 사용자에게 주기 전엔 그 URL로 직접 `curl` 다운로드해서 로컬
