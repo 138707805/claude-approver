@@ -22,9 +22,9 @@ function signatureFor(toolName, toolInput) {
     case "Bash":
       return `Bash::${input.command || ""}`;
     case "Write":
-      return `Write::${input.file_path || ""}`;
     case "Edit":
-      return `Edit::${input.file_path || ""}`;
+      // A path-only signature could silently approve a different, malicious rewrite.
+      return `${toolName}::${JSON.stringify(input)}`;
     default:
       return `${toolName}::${JSON.stringify(input)}`;
   }
@@ -397,7 +397,8 @@ async function main() {
     return; // 결정 없음 → 평소처럼 터미널에서 처리
   }
 
-  if (loadAllowlist().includes(signature)) {
+  // High-risk actions always require explicit review, even if a prior approval was remembered.
+  if (!isHighRisk(toolName, payload.tool_input) && loadAllowlist().includes(signature)) {
     // 자동 승인 항목은 ntfy로 보내지 않는다 — 알림도 안 뜨는 항목이라 폰 기록
     // 가치보다 ntfy.sh 무료 하루 발송 한도 소모가 더 문제였음(2026-08-25 확인:
     // 하루 한도 초과로 정작 필요한 승인 요청/완료 알림까지 막혔던 사고).
@@ -420,7 +421,7 @@ async function main() {
   // 있으므로, 로컬 설정 파일보다 폰이 최근에 publish해둔 값을 우선한다.
   const remoteAutoApprove = await fetchLatestAutoApproveSetting(settingsTopicFor(config), 4000);
   if (remoteAutoApprove !== null) persistAutoApproveSetting(remoteAutoApprove);
-  const autoApprove = remoteAutoApprove !== null ? remoteAutoApprove : config.autoApproveMode !== false; // 기본값 true
+  const autoApprove = remoteAutoApprove !== null ? remoteAutoApprove : config.autoApproveMode === true; // 기본값 false: 새 설치는 명시적으로 활성화하기 전까지 승인 요청
 
   if (autoApprove) {
     if (isHighRisk(toolName, payload.tool_input)) {
