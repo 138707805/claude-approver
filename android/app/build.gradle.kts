@@ -15,16 +15,8 @@ android {
         versionName = "1.11"
     }
 
-    // 고정된 debug keystore를 사용해서, 매 빌드마다(CI 포함) 같은 서명이 나오도록 한다.
-    // 이래야 새 APK를 기존 앱 위에 그냥 덮어 설치할 수 있다 (매번 삭제 후 재설치할 필요 없음).
-    signingConfigs {
-        getByName("debug") {
-            storeFile = file("../debug.keystore")
-            storePassword = "android"
-            keyAlias = "androiddebugkey"
-            keyPassword = "android"
-        }
-    }
+    // Use a locally generated Android debug key, never a signing key committed to git.
+    // Debug APKs are test builds and cannot safely upgrade an old APK signed by the leaked key.
 
     buildTypes {
         release {
