@@ -8,3 +8,9 @@ android/app/build/
 .DS_Store
 node_modules/
 dist/
+
+# Signing material must never enter version control.
+*.keystore
+*.jks
+*.p12
+*.pfx
