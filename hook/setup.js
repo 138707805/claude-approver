@@ -67,7 +67,7 @@ function loadOrCreateConfig() {
     // 요청은 이 값과 무관하게 항상 터미널 확인이 필요함). 앱의 "자동 허용
     // 모드" 스위치로 언제든 켜고 끌 수 있다. false로 바꾸면 항상 폰에 직접
     // 물어보고 응답을 기다리는 기존 방식으로 동작한다.
-    autoApproveMode: true,
+    autoApproveMode: false,
     ...REMOTE_INPUT_DEFAULTS,
   };
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
